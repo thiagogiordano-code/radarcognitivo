@@ -1,0 +1,72 @@
+import { GoogleGenAI, Modality } from "@google/genai";
+import { UserProfile, VarkType, KolbType } from "../types";
+
+const createClient = () => {
+  if (!process.env.API_KEY) {
+    console.error("API Key missing");
+    throw new Error("API Key is missing. Please configuration your environment.");
+  }
+  return new GoogleGenAI({ apiKey: process.env.API_KEY });
+};
+
+export const generateAudioIntro = async (text: string): Promise<string | null> => {
+  try {
+    const ai = createClient();
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash-preview-tts",
+      contents: [{ parts: [{ text }] }],
+      config: {
+        responseModalities: [Modality.AUDIO],
+        speechConfig: {
+          voiceConfig: {
+            prebuiltVoiceConfig: { voiceName: 'Kore' }, // Deep, calm voice suitable for a professor
+          },
+        },
+      },
+    });
+
+    const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+    if (base64Audio) {
+      return `data:audio/wav;base64,${base64Audio}`;
+    }
+    return null;
+  } catch (error) {
+    console.error("Error generating audio:", error);
+    return null;
+  }
+};
+
+export const generateProfileAnalysis = async (profile: UserProfile): Promise<string> => {
+  const ai = createClient();
+
+  // Construct a detailed prompt for the Thinking model
+  const prompt = `
+    Atue como o Prof. Thiago Giordano Siqueira, especialista em Andragogia e Design Instrucional.
+    Analise o perfil de um aluno adulto do curso de ${profile.course}.
+    
+    Perfil Identificado:
+    - Como absorve (VARK): ${profile.dominantVark.join(', ')}
+    - Como processa (Kolb): ${profile.dominantKolb.join(', ')}
+    
+    Escreva uma análise concisa (aprox. 150 palavras) e estratégica:
+    1. Valide a identidade de aprendizado do aluno.
+    2. Sinergia dos perfis: Explique especificamente como o modo de absorção (VARK) alimenta o modo de processamento (Kolb). Como esses dois se complementam de forma única?
+    3. Aplicação Prática: Dê um exemplo concreto de estudo no contexto de ${profile.course} onde essa combinação específica gera uma vantagem competitiva ou facilita a compreensão de conceitos complexos.
+    4. Encerre com um tom motivador e profissional, dirigindo-se ao aluno como "você".
+  `;
+
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-3-pro-preview", // Thinking model
+      contents: prompt,
+      config: {
+        thinkingConfig: { thinkingBudget: 32768 }, // Max thinking for deep connection
+      }
+    });
+
+    return response.text || "Não foi possível gerar a análise detalhada no momento.";
+  } catch (error) {
+    console.error("Error generating analysis:", error);
+    return "Ocorreu um erro ao gerar sua análise personalizada. Por favor, utilize as estratégias gerais listadas abaixo.";
+  }
+};
