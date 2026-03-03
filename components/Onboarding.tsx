@@ -5,14 +5,16 @@ import { ArrowRight, User, BookOpen, Heart, PenTool, CheckCircle, GraduationCap 
 
 interface Props {
   onComplete: (name: string, course: string, turma: string) => void;
+  initialTurma?: string;
+  lockTurma?: boolean;
 }
 
-const Onboarding: React.FC<Props> = ({ onComplete }) => {
+const Onboarding: React.FC<Props> = ({ onComplete, initialTurma = '', lockTurma = false }) => {
   const [step, setStep] = useState(0);
   const [name, setName] = useState('');
   const [course, setCourse] = useState<string>('');
   const [customCourse, setCustomCourse] = useState('');
-  const [turma, setTurma] = useState('');
+  const [turma, setTurma] = useState(initialTurma);
 
   const nextStep = () => setStep(prev => prev + 1);
 
@@ -151,13 +153,17 @@ const Onboarding: React.FC<Props> = ({ onComplete }) => {
         )}
 
         <div>
-          <label className="block text-sm font-medium text-slate-700 mb-2">Turma / Período:</label>
+          <label className="block text-sm font-medium text-slate-700 mb-2">
+            Turma / Período:
+            {lockTurma && <span className="ml-2 text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-medium">Definida pelo professor</span>}
+          </label>
           <input
             type="text"
-            className="w-full p-4 border border-slate-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:outline-none transition-shadow"
+            className={`w-full p-4 border rounded-lg transition-shadow ${lockTurma ? 'bg-slate-50 border-slate-200 text-slate-500 cursor-not-allowed' : 'border-slate-300 focus:ring-2 focus:ring-teal-500 focus:outline-none'}`}
             placeholder="Ex: Turma 2024.1, Período 3, Manhã"
             value={turma}
-            onChange={(e) => setTurma(e.target.value)}
+            onChange={(e) => !lockTurma && setTurma(e.target.value)}
+            readOnly={lockTurma}
           />
         </div>
       </div>

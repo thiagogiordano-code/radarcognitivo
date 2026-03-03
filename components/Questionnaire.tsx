@@ -33,43 +33,73 @@ const Questionnaire: React.FC<Props> = ({ questions, title, description, onCompl
     }, 250);
   };
 
+  const OPTION_LETTERS = ['A', 'B', 'C', 'D'];
+
   return (
     <div className="max-w-2xl mx-auto">
+      {/* Progress header */}
       <div className="mb-6">
-        <h2 className="text-2xl font-bold text-slate-800">{title}</h2>
-        <p className="text-slate-500 mt-1">{description}</p>
-        
-        <div className="w-full bg-slate-200 h-2 rounded-full mt-4">
-          <div 
-            className="bg-blue-600 h-2 rounded-full transition-all duration-300 ease-out"
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h2 className="text-xl font-bold text-slate-800">{title}</h2>
+            <p className="text-slate-500 text-sm mt-0.5">{description}</p>
+          </div>
+          <span className="text-sm font-semibold text-slate-500 bg-slate-100 px-3 py-1.5 rounded-full shrink-0">
+            {currentQIndex + 1} / {questions.length}
+          </span>
+        </div>
+
+        <div className="w-full bg-slate-200 h-1.5 rounded-full">
+          <div
+            className="bg-gradient-to-r from-blue-500 to-blue-600 h-1.5 rounded-full transition-all duration-500 ease-out"
             style={{ width: `${progress}%` }}
           />
         </div>
-        <p className="text-right text-xs text-slate-400 mt-1">
-          Pergunta {currentQIndex + 1} de {questions.length}
-        </p>
+
+        {/* Step dots */}
+        <div className="flex gap-1 mt-2 justify-center">
+          {questions.map((_, i) => (
+            <div
+              key={i}
+              className={`h-1 rounded-full transition-all duration-300 ${
+                i < currentQIndex ? 'bg-blue-400 w-4' :
+                i === currentQIndex ? 'bg-blue-600 w-6' : 'bg-slate-200 w-2'
+              }`}
+            />
+          ))}
+        </div>
       </div>
 
-      <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 min-h-[400px] flex flex-col justify-center">
-        <h3 className="text-xl font-semibold text-slate-800 mb-6 leading-relaxed">
-          {currentQuestion.text}
-        </h3>
+      {/* Question card */}
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+        <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-6 py-4">
+          <h3 className="text-lg font-semibold text-white leading-relaxed">
+            {currentQuestion.text}
+          </h3>
+        </div>
 
-        <div className="space-y-3">
+        <div className="p-5 space-y-3">
           {currentQuestion.options.map((opt, idx) => {
             const isSelected = selectedOption === opt.value;
             return (
               <button
                 key={idx}
                 onClick={() => handleSelect(opt.value)}
-                className={`w-full text-left p-4 rounded-lg border-2 transition-all flex items-center justify-between group
-                  ${isSelected 
-                    ? 'border-blue-500 bg-blue-50 text-blue-800' 
-                    : 'border-slate-100 hover:border-blue-300 hover:bg-slate-50'
+                className={`w-full text-left p-4 rounded-xl border-2 transition-all flex items-center gap-4 group active:scale-[0.99]
+                  ${isSelected
+                    ? 'border-blue-500 bg-blue-50 shadow-sm shadow-blue-100'
+                    : 'border-slate-100 hover:border-blue-200 hover:bg-slate-50/80'
                   }`}
               >
-                <span className="text-lg">{opt.label}</span>
-                {isSelected && <CheckCircle2 className="text-blue-500" size={24} />}
+                <span className={`shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-sm font-bold transition-colors ${
+                  isSelected ? 'bg-blue-500 text-white' : 'bg-slate-100 text-slate-500 group-hover:bg-blue-100 group-hover:text-blue-600'
+                }`}>
+                  {OPTION_LETTERS[idx]}
+                </span>
+                <span className={`text-base leading-snug transition-colors ${isSelected ? 'text-blue-800 font-medium' : 'text-slate-700'}`}>
+                  {opt.label}
+                </span>
+                {isSelected && <CheckCircle2 className="text-blue-500 ml-auto shrink-0" size={20} />}
               </button>
             );
           })}

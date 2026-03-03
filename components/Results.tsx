@@ -1,7 +1,8 @@
 import React, { useState, useRef } from 'react';
 import { UserProfile } from '../types';
 import { generatePDF } from '../utils/pdfGenerator';
-import { Download, BookOpen, BrainCircuit, RefreshCw, FileText, ChevronDown, ChevronUp, Lightbulb } from 'lucide-react';
+import { encodeStudentData } from '../utils/storageService';
+import { Download, BookOpen, BrainCircuit, RefreshCw, FileText, ChevronDown, ChevronUp, Lightbulb, Share2, Copy, Check } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Cell } from 'recharts';
 import { PROFILE_DESCRIPTIONS } from '../constants';
 
@@ -13,7 +14,19 @@ interface Props {
 
 const Results: React.FC<Props> = ({ profile, onFeedback, onRetake }) => {
   const [expandedSection, setExpandedSection] = useState<'VARK' | 'KOLB' | null>(null);
+  const [showShareCode, setShowShareCode] = useState(false);
+  const [codeCopied, setCodeCopied] = useState(false);
   const analysisRef = useRef<HTMLDivElement>(null);
+
+  const shareCode = encodeStudentData(profile);
+
+  const handleCopyCode = async () => {
+    try {
+      await navigator.clipboard.writeText(shareCode);
+      setCodeCopied(true);
+      setTimeout(() => setCodeCopied(false), 2500);
+    } catch { /* fallback */ }
+  };
 
   const varkData = Object.entries(profile.varkScores).map(([name, score]) => ({ name, score }));
   const kolbData = Object.entries(profile.kolbScores).map(([name, score]) => ({ name, score }));
@@ -194,19 +207,49 @@ const Results: React.FC<Props> = ({ profile, onFeedback, onRetake }) => {
         </button>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-             <button
-              onClick={onFeedback}
-              className="flex items-center justify-center gap-2 bg-white border-2 border-slate-200 hover:border-slate-300 hover:bg-slate-50 text-slate-700 px-6 py-4 rounded-xl font-medium transition-colors"
-            >
-              Enviar Feedback
-            </button>
-            <button
-              onClick={onRetake}
-              className="flex items-center justify-center gap-2 bg-white border-2 border-slate-200 hover:border-blue-300 hover:text-blue-600 text-slate-500 px-6 py-4 rounded-xl font-medium transition-colors"
-            >
-              <RefreshCw size={18} />
-              Refazer o teste
-            </button>
+          <button
+            onClick={onFeedback}
+            className="flex items-center justify-center gap-2 bg-white border-2 border-slate-200 hover:border-slate-300 hover:bg-slate-50 text-slate-700 px-6 py-4 rounded-xl font-medium transition-colors"
+          >
+            Enviar Feedback
+          </button>
+          <button
+            onClick={onRetake}
+            className="flex items-center justify-center gap-2 bg-white border-2 border-slate-200 hover:border-blue-300 hover:text-blue-600 text-slate-500 px-6 py-4 rounded-xl font-medium transition-colors"
+          >
+            <RefreshCw size={18} />
+            Refazer o teste
+          </button>
+        </div>
+
+        {/* Share code for professor */}
+        <div className="mt-2">
+          <button
+            onClick={() => setShowShareCode(v => !v)}
+            className="flex items-center gap-2 text-sm text-slate-500 hover:text-slate-700 mx-auto transition-colors"
+          >
+            <Share2 size={15} />
+            {showShareCode ? 'Ocultar código' : 'Gerar código para o professor'}
+          </button>
+          {showShareCode && (
+            <div className="mt-3 bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3 animate-fadeIn">
+              <p className="text-xs text-slate-500">Copie este código e envie ao professor para que ele registre seu resultado no painel de turmas.</p>
+              <div className="relative">
+                <textarea
+                  readOnly
+                  value={shareCode}
+                  rows={3}
+                  className="w-full text-xs font-mono text-slate-600 bg-white border border-slate-200 rounded-lg p-3 resize-none focus:outline-none"
+                />
+              </div>
+              <button
+                onClick={handleCopyCode}
+                className={`flex items-center gap-2 text-xs font-semibold px-4 py-2 rounded-lg transition-colors ${codeCopied ? 'bg-green-100 text-green-700' : 'bg-slate-800 text-white hover:bg-slate-900'}`}
+              >
+                {codeCopied ? <><Check size={13} /> Copiado!</> : <><Copy size={13} /> Copiar código</>}
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>
