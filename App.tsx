@@ -5,17 +5,21 @@ import Onboarding from './components/Onboarding';
 import Questionnaire from './components/Questionnaire';
 import Results from './components/Results';
 import Feedback from './components/Feedback';
+import ClassReportsPanel from './components/ClassReportsPanel';
 import { generateProfileAnalysis } from './services/geminiService';
-import { Brain, Network, Sparkles, GraduationCap } from 'lucide-react';
+import { saveStudentRecord, getAllRecords } from './utils/storageService';
+import { Brain, Network, Sparkles, GraduationCap, BarChart2 } from 'lucide-react';
 
 const App: React.FC = () => {
   const [step, setStep] = useState<AppStep>(AppStep.ONBOARDING);
   const [profile, setProfile] = useState<Partial<UserProfile>>({});
   const [varkAnswers, setVarkAnswers] = useState<Record<number, string>>({});
   const [kolbAnswers, setKolbAnswers] = useState<Record<number, string>>({});
+  const [showReports, setShowReports] = useState(false);
+  const [recordCount, setRecordCount] = useState(() => getAllRecords().length);
 
-  const handleOnboardingComplete = (name: string, course: string) => {
-    setProfile({ ...profile, name, course });
+  const handleOnboardingComplete = (name: string, course: string, turma: string) => {
+    setProfile({ ...profile, name, course, turma });
     setStep(AppStep.QUESTIONNAIRE_VARK);
   };
 
@@ -44,6 +48,7 @@ const App: React.FC = () => {
     const finalProfile: UserProfile = {
       name: profile.name!,
       course: profile.course!,
+      turma: profile.turma!,
       varkScores: vScores as Record<VarkType, number>,
       kolbScores: kScores as Record<KolbType, number>,
       dominantVark: domV,
@@ -55,7 +60,10 @@ const App: React.FC = () => {
 
     // Trigger AI analysis
     generateProfileAnalysis(finalProfile).then(analysis => {
+      const completedProfile = { ...finalProfile, aiAnalysis: analysis };
       setProfile(prev => ({ ...prev, aiAnalysis: analysis }));
+      saveStudentRecord(completedProfile);
+      setRecordCount(prev => prev + 1);
       setStep(AppStep.RESULTS);
     });
   };
@@ -74,11 +82,26 @@ const App: React.FC = () => {
               <span className="text-xs text-slate-500 font-medium">Prof. Thiago Giordano Siqueira</span>
             </div>
           </div>
-          {profile.name && step !== AppStep.ONBOARDING && (
-            <div className="hidden sm:block text-sm text-slate-500 bg-slate-100 px-3 py-1 rounded-full">
-              Estudante: <span className="font-medium text-slate-800">{profile.name}</span>
-            </div>
-          )}
+          <div className="flex items-center gap-3">
+            {profile.name && step !== AppStep.ONBOARDING && (
+              <div className="hidden sm:block text-sm text-slate-500 bg-slate-100 px-3 py-1 rounded-full">
+                Estudante: <span className="font-medium text-slate-800">{profile.name}</span>
+              </div>
+            )}
+            <button
+              onClick={() => setShowReports(true)}
+              title="Relatórios das Turmas"
+              className="flex items-center gap-2 text-sm text-slate-600 hover:text-blue-700 bg-slate-100 hover:bg-blue-50 border border-slate-200 hover:border-blue-300 px-3 py-1.5 rounded-lg transition-colors"
+            >
+              <BarChart2 size={16} />
+              <span className="hidden sm:inline">Relatórios</span>
+              {recordCount > 0 && (
+                <span className="bg-blue-600 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center font-bold">
+                  {recordCount}
+                </span>
+              )}
+            </button>
+          </div>
         </div>
       </header>
 
@@ -148,6 +171,10 @@ const App: React.FC = () => {
           <Feedback />
         )}
       </main>
+
+      {showReports && (
+        <ClassReportsPanel onClose={() => setShowReports(false)} />
+      )}
       
       <style>{`
         @keyframes fadeIn {

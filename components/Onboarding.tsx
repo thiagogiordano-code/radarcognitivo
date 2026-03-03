@@ -4,7 +4,7 @@ import { Course } from '../types';
 import { ArrowRight, User, BookOpen, Heart, PenTool, CheckCircle, GraduationCap } from 'lucide-react';
 
 interface Props {
-  onComplete: (name: string, course: string) => void;
+  onComplete: (name: string, course: string, turma: string) => void;
 }
 
 const Onboarding: React.FC<Props> = ({ onComplete }) => {
@@ -12,12 +12,13 @@ const Onboarding: React.FC<Props> = ({ onComplete }) => {
   const [name, setName] = useState('');
   const [course, setCourse] = useState<string>('');
   const [customCourse, setCustomCourse] = useState('');
+  const [turma, setTurma] = useState('');
 
   const nextStep = () => setStep(prev => prev + 1);
 
   const handleFinalSubmit = () => {
-    if (name.trim() && (course !== Course.OUTROS || customCourse.trim())) {
-      onComplete(name, course === Course.OUTROS ? customCourse : course);
+    if (name.trim() && (course !== Course.OUTROS || customCourse.trim()) && turma.trim()) {
+      onComplete(name, course === Course.OUTROS ? customCourse : course, turma);
     }
   };
 
@@ -148,6 +149,17 @@ const Onboarding: React.FC<Props> = ({ onComplete }) => {
             />
           </div>
         )}
+
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-2">Turma / Período:</label>
+          <input
+            type="text"
+            className="w-full p-4 border border-slate-300 rounded-lg focus:ring-2 focus:ring-teal-500 focus:outline-none transition-shadow"
+            placeholder="Ex: Turma 2024.1, Período 3, Manhã"
+            value={turma}
+            onChange={(e) => setTurma(e.target.value)}
+          />
+        </div>
       </div>
       
       <div className="pt-6 border-t border-slate-100 text-center">
@@ -159,7 +171,7 @@ const Onboarding: React.FC<Props> = ({ onComplete }) => {
 
       <button
         onClick={handleFinalSubmit}
-        disabled={!name || !course || (course === Course.OUTROS && !customCourse)}
+        disabled={!name || !course || (course === Course.OUTROS && !customCourse) || !turma}
         className="w-full bg-teal-600 hover:bg-teal-700 text-white font-semibold py-4 rounded-xl transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-teal-600/20"
       >
         Iniciar Questionário <CheckCircle size={20} />

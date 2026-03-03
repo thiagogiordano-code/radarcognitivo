@@ -43,11 +43,18 @@ export interface Question {
 export interface UserProfile {
   name: string;
   course: Course | string; // string for manual entry
+  turma: string; // class/cohort identifier
   varkScores: Record<VarkType, number>;
   kolbScores: Record<KolbType, number>;
   dominantVark: VarkType[];
   dominantKolb: KolbType[];
   aiAnalysis?: string;
+}
+
+export interface StudentRecord {
+  id: string; // unique identifier (timestamp + name)
+  completedAt: string; // ISO date string
+  profile: UserProfile;
 }
 
 export interface FeedbackData {
