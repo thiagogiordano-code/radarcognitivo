@@ -1,7 +1,6 @@
 import { StudentRecord, UserProfile } from '../types';
 
-const RECORDS_KEY = 'radar_cognitivo_records';
-const TURMAS_KEY = 'rc_turmas';
+const API = '/api';
 
 export interface TurmaConfig {
   id: string;
@@ -12,90 +11,93 @@ export interface TurmaConfig {
 
 // ─── Student Records ─────────────────────────────────────────────────────────
 
-export const saveStudentRecord = (profile: UserProfile): StudentRecord => {
+export const saveStudentRecord = async (profile: UserProfile): Promise<StudentRecord> => {
   const record: StudentRecord = {
     id: `${Date.now()}_${profile.name.replace(/\s+/g, '_')}`,
     completedAt: new Date().toISOString(),
     profile,
   };
-  const existing = getAllRecords();
-  existing.push(record);
-  localStorage.setItem(RECORDS_KEY, JSON.stringify(existing));
+  await fetch(`${API}/records`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(record),
+  });
   return record;
 };
 
-export const getAllRecords = (): StudentRecord[] => {
+export const getAllRecords = async (): Promise<StudentRecord[]> => {
   try {
-    const data = localStorage.getItem(RECORDS_KEY);
-    return data ? JSON.parse(data) : [];
+    const res = await fetch(`${API}/records`);
+    if (!res.ok) return [];
+    return res.json();
   } catch {
     return [];
   }
 };
 
-export const getRecordsByTurma = (): Record<string, StudentRecord[]> =>
-  getAllRecords().reduce<Record<string, StudentRecord[]>>((acc, r) => {
+export const getRecordsByTurma = async (): Promise<Record<string, StudentRecord[]>> => {
+  const all = await getAllRecords();
+  return all.reduce<Record<string, StudentRecord[]>>((acc, r) => {
     const key = r.profile.turma || 'Sem Turma';
     (acc[key] = acc[key] || []).push(r);
     return acc;
   }, {});
+};
 
-export const getUniqueTurmas = (): string[] => {
-  const all = getAllRecords();
+export const getUniqueTurmas = async (): Promise<string[]> => {
+  const all = await getAllRecords();
   return Array.from(new Set(all.map(r => r.profile.turma || 'Sem Turma'))).sort();
 };
 
-export const deleteRecord = (id: string): void => {
-  const updated = getAllRecords().filter(r => r.id !== id);
-  localStorage.setItem(RECORDS_KEY, JSON.stringify(updated));
+export const deleteRecord = async (id: string): Promise<void> => {
+  await fetch(`${API}/records/${encodeURIComponent(id)}`, { method: 'DELETE' });
 };
 
-export const clearAllRecords = (): void => {
-  localStorage.removeItem(RECORDS_KEY);
+export const clearAllRecords = async (): Promise<void> => {
+  await fetch(`${API}/records`, { method: 'DELETE' });
 };
 
 // ─── Turma Management ────────────────────────────────────────────────────────
 
-export const getAllTurmaConfigs = (): TurmaConfig[] => {
+export const getAllTurmaConfigs = async (): Promise<TurmaConfig[]> => {
   try {
-    const data = localStorage.getItem(TURMAS_KEY);
-    return data ? JSON.parse(data) : [];
+    const res = await fetch(`${API}/turmas`);
+    if (!res.ok) return [];
+    return res.json();
   } catch {
     return [];
   }
 };
 
-export const saveTurmaConfig = (name: string, course?: string): TurmaConfig => {
+export const saveTurmaConfig = async (name: string, course?: string): Promise<TurmaConfig> => {
   const turma: TurmaConfig = {
     id: `turma_${Date.now()}`,
     name: name.trim(),
     course,
     createdAt: new Date().toISOString(),
   };
-  const existing = getAllTurmaConfigs();
-  if (!existing.find(t => t.name === turma.name)) {
-    existing.push(turma);
-    localStorage.setItem(TURMAS_KEY, JSON.stringify(existing));
-  }
+  await fetch(`${API}/turmas`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(turma),
+  });
   return turma;
 };
 
-export const deleteTurmaConfig = (id: string): void => {
-  const updated = getAllTurmaConfigs().filter(t => t.id !== id);
-  localStorage.setItem(TURMAS_KEY, JSON.stringify(updated));
+export const deleteTurmaConfig = async (id: string): Promise<void> => {
+  await fetch(`${API}/turmas/${encodeURIComponent(id)}`, { method: 'DELETE' });
 };
 
-export const clearAllTurmaConfigs = (): void => {
-  localStorage.removeItem(TURMAS_KEY);
+export const clearAllTurmaConfigs = async (): Promise<void> => {
+  await fetch(`${API}/turmas`, { method: 'DELETE' });
 };
 
-// ─── Import / Export codes ────────────────────────────────────────────────────
+// ─── Import / Export ─────────────────────────────────────────────────────────
 
-export const encodeStudentData = (profile: UserProfile): string => {
-  return btoa(unescape(encodeURIComponent(JSON.stringify(profile))));
-};
+export const encodeStudentData = (profile: UserProfile): string =>
+  btoa(unescape(encodeURIComponent(JSON.stringify(profile))));
 
-export const importStudentData = (code: string): StudentRecord | null => {
+export const importStudentData = async (code: string): Promise<StudentRecord | null> => {
   try {
     const profile: UserProfile = JSON.parse(decodeURIComponent(escape(atob(code.trim()))));
     if (!profile.name || !profile.turma) return null;
@@ -104,9 +106,11 @@ export const importStudentData = (code: string): StudentRecord | null => {
       completedAt: new Date().toISOString(),
       profile,
     };
-    const existing = getAllRecords();
-    existing.push(record);
-    localStorage.setItem(RECORDS_KEY, JSON.stringify(existing));
+    await fetch(`${API}/records`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(record),
+    });
     return record;
   } catch {
     return null;

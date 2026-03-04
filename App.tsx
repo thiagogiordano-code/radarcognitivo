@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { AppStep, UserProfile, VarkType, KolbType } from './types';
 import { VARK_QUESTIONS, KOLB_QUESTIONS } from './constants';
 import Onboarding from './components/Onboarding';
@@ -24,7 +24,8 @@ const App: React.FC = () => {
   const [profile, setProfile] = useState<Partial<UserProfile>>({});
   const [varkAnswers, setVarkAnswers] = useState<Record<number, string>>({});
   const [kolbAnswers, setKolbAnswers] = useState<Record<number, string>>({});
-  const [recordCount, setRecordCount] = useState(() => getAllRecords().length);
+  const [recordCount, setRecordCount] = useState(0);
+  useEffect(() => { getAllRecords().then(rs => setRecordCount(rs.length)); }, []);
 
   // Turma from URL (set by teacher's shared link)
   const [urlTurma] = useState(() => getUrlParam('turma') ?? '');
@@ -69,10 +70,10 @@ const App: React.FC = () => {
     setProfile(finalProfile);
     setStep(AppStep.ANALYZING);
 
-    generateProfileAnalysis(finalProfile).then(analysis => {
+    generateProfileAnalysis(finalProfile).then(async analysis => {
       const completed = { ...finalProfile, aiAnalysis: analysis };
       setProfile(prev => ({ ...prev, aiAnalysis: analysis }));
-      saveStudentRecord(completed);
+      await saveStudentRecord(completed);
       setRecordCount(prev => prev + 1);
       setStep(AppStep.RESULTS);
     });

@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, PieChart, Pie, Legend
 } from 'recharts';
@@ -8,7 +8,7 @@ import {
   ChevronDown, ChevronUp, ArrowUpDown, AlertTriangle, Download
 } from 'lucide-react';
 import {
-  getAllRecords, getRecordsByTurma, getAllTurmaConfigs, saveTurmaConfig,
+  getAllRecords, getAllTurmaConfigs, saveTurmaConfig,
   deleteTurmaConfig, deleteRecord, clearAllRecords, clearAllTurmaConfigs,
   importStudentData, StudentRecord, TurmaConfig
 } from '../utils/storageService';
@@ -41,8 +41,8 @@ interface Props {
 
 const AdminDashboard: React.FC<Props> = ({ onLogout }) => {
   const [tab, setTab] = useState<Tab>('overview');
-  const [records, setRecords] = useState<StudentRecord[]>(() => getAllRecords());
-  const [turmaConfigs, setTurmaConfigs] = useState<TurmaConfig[]>(() => getAllTurmaConfigs());
+  const [records, setRecords] = useState<StudentRecord[]>([]);
+  const [turmaConfigs, setTurmaConfigs] = useState<TurmaConfig[]>([]);
   const [newTurmaName, setNewTurmaName] = useState('');
   const [newTurmaCourse, setNewTurmaCourse] = useState('');
   const [importCode, setImportCode] = useState('');
@@ -56,15 +56,22 @@ const AdminDashboard: React.FC<Props> = ({ onLogout }) => {
   const [confirmClearAll, setConfirmClearAll] = useState(false);
   const [exporting, setExporting] = useState<string | null>(null);
 
-  const refresh = useCallback(() => {
-    setRecords(getAllRecords());
-    setTurmaConfigs(getAllTurmaConfigs());
+  const refresh = useCallback(async () => {
+    const [recs, turmas] = await Promise.all([getAllRecords(), getAllTurmaConfigs()]);
+    setRecords(recs);
+    setTurmaConfigs(turmas);
   }, []);
+
+  useEffect(() => { refresh(); }, [refresh]);
 
   const handleLogout = () => { adminLogout(); onLogout(); };
 
   // ─── Stats ────────────────────────────────────────────────────────────────
-  const recordsByTurma = getRecordsByTurma();
+  const recordsByTurma = records.reduce<Record<string, StudentRecord[]>>((acc, r) => {
+    const key = r.profile.turma || 'Sem Turma';
+    (acc[key] = acc[key] || []).push(r);
+    return acc;
+  }, {});
   const totalStudents = records.length;
   const totalTurmas = Object.keys(recordsByTurma).length;
   const uniqueCourses = new Set(records.map(r => r.profile.course)).size;
@@ -95,22 +102,22 @@ const AdminDashboard: React.FC<Props> = ({ onLogout }) => {
   };
 
   // ─── Turma creation ────────────────────────────────────────────────────────
-  const handleAddTurma = () => {
+  const handleAddTurma = async () => {
     if (!newTurmaName.trim()) return;
-    saveTurmaConfig(newTurmaName, newTurmaCourse || undefined);
+    await saveTurmaConfig(newTurmaName, newTurmaCourse || undefined);
     setNewTurmaName('');
     setNewTurmaCourse('');
     refresh();
   };
 
-  const handleDeleteTurma = (id: string) => {
-    deleteTurmaConfig(id);
+  const handleDeleteTurma = async (id: string) => {
+    await deleteTurmaConfig(id);
     refresh();
   };
 
   // ─── Import ────────────────────────────────────────────────────────────────
-  const handleImport = () => {
-    const record = importStudentData(importCode);
+  const handleImport = async () => {
+    const record = await importStudentData(importCode);
     if (record) { setImportStatus('ok'); setImportCode(''); refresh(); setTimeout(() => setImportStatus('idle'), 3000); }
     else setImportStatus('error');
   };
@@ -143,9 +150,8 @@ const AdminDashboard: React.FC<Props> = ({ onLogout }) => {
     } finally { setExporting(null); }
   };
 
-  const handleClearAll = () => {
-    clearAllRecords();
-    clearAllTurmaConfigs();
+  const handleClearAll = async () => {
+    await Promise.all([clearAllRecords(), clearAllTurmaConfigs()]);
     refresh();
     setConfirmClearAll(false);
   };
@@ -516,7 +522,7 @@ const AdminDashboard: React.FC<Props> = ({ onLogout }) => {
                             {new Date(r.completedAt).toLocaleDateString('pt-BR')}
                           </td>
                           <td className="px-4 py-3">
-                            <button onClick={() => { deleteRecord(r.id); refresh(); }} className="text-slate-300 hover:text-red-500 transition-colors">
+                            <button onClick={async () => { await deleteRecord(r.id); refresh(); }} className="text-slate-300 hover:text-red-500 transition-colors">
                               <Trash2 size={14} />
                             </button>
                           </td>

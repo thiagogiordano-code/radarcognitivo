@@ -6,7 +6,8 @@ on:
   workflow_dispatch:
 
 env:
-  IMAGE_NAME: ghcr.io/${{ github.repository }}
+  FRONTEND_IMAGE: ghcr.io/${{ github.repository }}/frontend
+  BACKEND_IMAGE: ghcr.io/${{ github.repository }}/backend
 
 jobs:
   build-and-deploy:
@@ -27,16 +28,23 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push Docker image
+      - name: Build and push frontend image
         uses: docker/build-push-action@v5
         with:
           context: .
+          file: Dockerfile
           push: true
-          tags: |
-            ${{ env.IMAGE_NAME }}:latest
-            ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          tags: ${{ env.FRONTEND_IMAGE }}:latest
           build-args: |
             GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
+
+      - name: Build and push backend image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./server
+          file: ./server/Dockerfile
+          push: true
+          tags: ${{ env.BACKEND_IMAGE }}:latest
 
       - name: Deploy to VPS via SSH
         uses: appleboy/ssh-action@v1
@@ -45,8 +53,60 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: 22
+          envs: FRONTEND_IMAGE,BACKEND_IMAGE,GHCR_TOKEN,GHCR_USER,DB_PASSWORD
           script: |
-            docker pull ${{ env.IMAGE_NAME }}:latest
-            docker stop radarcognitivo || true
-            docker rm radarcognitivo || true
-            docker run -d --name radarcognitivo --restart unless-stopped -p 3000:80 ${{ env.IMAGE_NAME }}:latest
+            # Login to GHCR to pull private images
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+
+            # Ensure app directory exists
+            mkdir -p /opt/radarcognitivo
+
+            # Write docker-compose.yml
+            cat > /opt/radarcognitivo/docker-compose.yml << 'COMPOSE'
+            services:
+              db:
+                image: postgres:16-alpine
+                environment:
+                  POSTGRES_DB: radarcognitivo
+                  POSTGRES_USER: radar
+                  POSTGRES_PASSWORD: ${DB_PASSWORD}
+                volumes:
+                  - pgdata:/var/lib/postgresql/data
+                restart: unless-stopped
+                healthcheck:
+                  test: ["CMD-SHELL", "pg_isready -U radar -d radarcognitivo"]
+                  interval: 10s
+                  timeout: 5s
+                  retries: 5
+
+              backend:
+                image: ${BACKEND_IMAGE}
+                environment:
+                  DATABASE_URL: postgresql://radar:${DB_PASSWORD}@db:5432/radarcognitivo
+                depends_on:
+                  db:
+                    condition: service_healthy
+                restart: unless-stopped
+
+              frontend:
+                image: ${FRONTEND_IMAGE}
+                ports:
+                  - "3000:80"
+                depends_on:
+                  - backend
+                restart: unless-stopped
+
+            volumes:
+              pgdata:
+            COMPOSE
+
+            # Pull updated images and restart services
+            cd /opt/radarcognitivo
+            FRONTEND_IMAGE="$FRONTEND_IMAGE" BACKEND_IMAGE="$BACKEND_IMAGE" DB_PASSWORD="$DB_PASSWORD" docker compose pull
+            FRONTEND_IMAGE="$FRONTEND_IMAGE" BACKEND_IMAGE="$BACKEND_IMAGE" DB_PASSWORD="$DB_PASSWORD" docker compose up -d
+        env:
+          FRONTEND_IMAGE: ${{ env.FRONTEND_IMAGE }}
+          BACKEND_IMAGE: ${{ env.BACKEND_IMAGE }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
