@@ -104,6 +104,8 @@ jobs:
             cd /opt/radarcognitivo
             FRONTEND_IMAGE="$FRONTEND_IMAGE" BACKEND_IMAGE="$BACKEND_IMAGE" DB_PASSWORD="$DB_PASSWORD" docker compose pull
             FRONTEND_IMAGE="$FRONTEND_IMAGE" BACKEND_IMAGE="$BACKEND_IMAGE" DB_PASSWORD="$DB_PASSWORD" docker compose down --remove-orphans
+            # Force release port 3000 if still in use
+            fuser -k 3000/tcp || true
             FRONTEND_IMAGE="$FRONTEND_IMAGE" BACKEND_IMAGE="$BACKEND_IMAGE" DB_PASSWORD="$DB_PASSWORD" docker compose up -d
         env:
           FRONTEND_IMAGE: ${{ env.FRONTEND_IMAGE }}
