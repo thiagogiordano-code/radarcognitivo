@@ -2,7 +2,7 @@ name: Deploy to VPS
 
 on:
   push:
-    branches: [main]
+    branches: [main, claude/fix-data-storage-reports-RMccA]
   workflow_dispatch:
 
 env:
