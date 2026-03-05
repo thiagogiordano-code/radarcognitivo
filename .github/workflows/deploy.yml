@@ -104,9 +104,14 @@ jobs:
             cd /opt/radarcognitivo
             FRONTEND_IMAGE="$FRONTEND_IMAGE" BACKEND_IMAGE="$BACKEND_IMAGE" DB_PASSWORD="$DB_PASSWORD" docker compose pull
             FRONTEND_IMAGE="$FRONTEND_IMAGE" BACKEND_IMAGE="$BACKEND_IMAGE" DB_PASSWORD="$DB_PASSWORD" docker compose down --remove-orphans
-            # Force release port 3000 if still in use
-            fuser -k 3000/tcp 2>/dev/null || lsof -ti:3000 | xargs -r kill -9 2>/dev/null || true
-            sleep 2
+            # Wait until port 3000 is free before starting
+            for i in $(seq 1 10); do
+              if ! ss -tlnp | grep -q ':3000 '; then break; fi
+              echo "Port 3000 still in use (attempt $i), killing..."
+              pkill -9 -f "docker-proxy.*3000" 2>/dev/null || true
+              fuser -k 3000/tcp 2>/dev/null || lsof -ti:3000 | xargs -r kill -9 2>/dev/null || true
+              sleep 2
+            done
             FRONTEND_IMAGE="$FRONTEND_IMAGE" BACKEND_IMAGE="$BACKEND_IMAGE" DB_PASSWORD="$DB_PASSWORD" docker compose up -d
         env:
           FRONTEND_IMAGE: ${{ env.FRONTEND_IMAGE }}
