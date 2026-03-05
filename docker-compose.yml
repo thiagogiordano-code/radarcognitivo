@@ -26,7 +26,7 @@ services:
   frontend:
     image: ${FRONTEND_IMAGE:-radarcognitivo-frontend}
     ports:
-      - "3000:80"
+      - "${FRONTEND_HOST_PORT:-3000}:80"
     depends_on:
       - backend
     restart: unless-stopped

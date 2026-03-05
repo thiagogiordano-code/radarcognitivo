@@ -58,13 +58,24 @@ jobs:
             set -euo pipefail
             PROJECT=radarcognitivo
             WORKDIR=/opt/radarcognitivo
+            PRIMARY_PORT=3000
+            FALLBACK_PORT=3001
+
+            echo "== Deploy starting | project=${PROJECT} workdir=${WORKDIR} =="
 
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
 
             mkdir -p "$WORKDIR"
 
-            # Fixa o project name via .env — garante consistência mesmo sem -p
-            echo "COMPOSE_PROJECT_NAME=${PROJECT}" > "$WORKDIR/.env"
+            # Upsert COMPOSE_PROJECT_NAME no .env sem sobrescrever outras variáveis
+            ENVFILE="$WORKDIR/.env"
+            touch "$ENVFILE"
+            if grep -q '^COMPOSE_PROJECT_NAME=' "$ENVFILE"; then
+              sed -i "s/^COMPOSE_PROJECT_NAME=.*/COMPOSE_PROJECT_NAME=${PROJECT}/" "$ENVFILE"
+            else
+              echo "COMPOSE_PROJECT_NAME=${PROJECT}" >> "$ENVFILE"
+            fi
+            echo "== .env: $(grep COMPOSE_PROJECT_NAME $ENVFILE) =="
 
             cat > "$WORKDIR/docker-compose.yml" << 'COMPOSE'
             services:
@@ -95,7 +106,7 @@ jobs:
               frontend:
                 image: ${FRONTEND_IMAGE}
                 ports:
-                  - "3000:80"
+                  - "${FRONTEND_HOST_PORT:-3000}:80"
                 depends_on:
                   - backend
                 restart: unless-stopped
@@ -106,55 +117,60 @@ jobs:
 
             cd "$WORKDIR"
 
-            echo ">>> [1] Parando qualquer container que publique porta 3000..."
-            CID=$(docker ps -q --filter "publish=3000" || true)
+            echo ">>> [1] Compose down com remoção de órfãos..."
+            FRONTEND_IMAGE="$FRONTEND_IMAGE" BACKEND_IMAGE="$BACKEND_IMAGE" DB_PASSWORD="$DB_PASSWORD" \
+              docker compose -p "$PROJECT" down --remove-orphans --timeout 30 || true
+
+            echo ">>> [2] Removendo containers que publicam ${PRIMARY_PORT}..."
+            CID=$(docker ps -q --filter "publish=${PRIMARY_PORT}" || true)
             if [ -n "$CID" ]; then
-              echo "    Containers na porta 3000: $CID"
+              echo "    IDs na porta ${PRIMARY_PORT}: $CID"
               docker stop $CID || true
               docker rm -f $CID || true
             fi
 
-            echo ">>> [2] docker compose -p $PROJECT down --remove-orphans..."
-            FRONTEND_IMAGE="$FRONTEND_IMAGE" BACKEND_IMAGE="$BACKEND_IMAGE" DB_PASSWORD="$DB_PASSWORD" \
-              docker compose -p "$PROJECT" down --remove-orphans --timeout 30 || true
-
-            echo ">>> [3] Aguardando liberacao da porta 3000..."
-            for i in {1..10}; do
-              if ! ss -ltn | grep -q ':3000'; then
-                echo "    Porta 3000 livre (tentativa $i)."
+            echo ">>> [3] Aguardando porta ${PRIMARY_PORT} livre..."
+            TARGET_PORT="${PRIMARY_PORT}"
+            for i in $(seq 1 10); do
+              if ! ss -ltn | grep -q ":${PRIMARY_PORT} "; then
+                echo "    Porta ${PRIMARY_PORT} livre (tentativa ${i})."
                 break
               fi
-              echo "    Tentativa $i/10: porta 3000 ainda ocupada..."
-              CID=$(docker ps -q --filter "publish=3000" || true)
+              echo "    Tentativa ${i}/10: porta ${PRIMARY_PORT} ainda ocupada..."
+              CID=$(docker ps -q --filter "publish=${PRIMARY_PORT}" || true)
               if [ -n "$CID" ]; then
                 docker stop $CID 2>/dev/null || true
                 docker rm -f $CID 2>/dev/null || true
-              else
-                lsof -ti:3000 2>/dev/null | xargs -r kill -9 2>/dev/null || true
               fi
               sleep 2
             done
 
-            if ss -ltn | grep -q ':3000'; then
-              echo "ERRO FATAL: porta 3000 ainda ocupada. Diagnostico:"
-              ss -ltnp | grep ':3000' || true
-              docker ps --filter "publish=3000" --format "table {{.ID}}\t{{.Names}}\t{{.Ports}}" || true
-              exit 1
+            # Se ainda ocupada por processo host (não Docker), ativa fallback 3001
+            if ss -ltn | grep -q ":${PRIMARY_PORT} "; then
+              echo ">>> AVISO: porta ${PRIMARY_PORT} ocupada por processo host (não Docker)."
+              echo "    Diagnostico:"
+              ss -ltnp | grep ":${PRIMARY_PORT} " || true
+              echo "    Ativando fallback para porta ${FALLBACK_PORT}."
+              TARGET_PORT="${FALLBACK_PORT}"
             fi
 
-            echo ">>> [4] docker compose pull..."
+            echo ">>> [4] FRONTEND_HOST_PORT=${TARGET_PORT}"
+
+            echo ">>> [5] docker compose pull..."
             FRONTEND_IMAGE="$FRONTEND_IMAGE" BACKEND_IMAGE="$BACKEND_IMAGE" DB_PASSWORD="$DB_PASSWORD" \
               docker compose -p "$PROJECT" pull
 
-            echo ">>> [5] docker compose -p $PROJECT up -d --force-recreate --remove-orphans..."
+            echo ">>> [6] docker compose up (port=${TARGET_PORT})..."
             FRONTEND_IMAGE="$FRONTEND_IMAGE" BACKEND_IMAGE="$BACKEND_IMAGE" DB_PASSWORD="$DB_PASSWORD" \
+            FRONTEND_HOST_PORT="$TARGET_PORT" \
               docker compose -p "$PROJECT" up -d --force-recreate --remove-orphans
 
-            echo ">>> [6] Status pos-deploy:"
+            echo ">>> [7] Status pos-deploy:"
             sleep 3
             docker compose -p "$PROJECT" ps
             docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | head -20
             docker compose -p "$PROJECT" logs --tail=50
+            echo "== Deploy concluido. Frontend disponivel na porta ${TARGET_PORT}. =="
 
         env:
           FRONTEND_IMAGE: ${{ env.FRONTEND_IMAGE }}
