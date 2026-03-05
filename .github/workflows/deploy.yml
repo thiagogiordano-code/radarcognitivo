@@ -53,7 +53,7 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ secrets.VPS_SSH_PORT || 22 }}
-          envs: FRONTEND_IMAGE,BACKEND_IMAGE,GHCR_TOKEN,GHCR_USER,DB_PASSWORD
+          envs: FRONTEND_IMAGE,BACKEND_IMAGE,GHCR_TOKEN,GHCR_USER,DB_PASSWORD,REPO_SSH_URL
           script_stop: true
           script: |
             set -euo pipefail
@@ -70,11 +70,14 @@ jobs:
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
 
             # ── Ensure repo exists (clone if missing) ─────────────────────
+            if [ -z "${REPO_SSH_URL:-}" ]; then
+              echo "ERROR: REPO_SSH_URL is empty. Set the secret REPO_SSH_URL in GitHub."
+              exit 1
+            fi
             if [ ! -d "${WORKDIR}/.git" ]; then
-              echo "== Repo not found. Cloning =="
-              sudo mkdir -p "${WORKDIR}"
-              sudo chown -R "$USER:$USER" "${WORKDIR}"
-              git clone "${{ secrets.REPO_SSH_URL }}" "${WORKDIR}"
+              echo "== Repo not found at ${WORKDIR}. Cloning =="
+              mkdir -p "${WORKDIR}"
+              git clone "${REPO_SSH_URL}" "${WORKDIR}"
             fi
 
             cd "${WORKDIR}"
@@ -193,3 +196,4 @@ jobs:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GHCR_USER: ${{ github.actor }}
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          REPO_SSH_URL: ${{ secrets.REPO_SSH_URL }}
