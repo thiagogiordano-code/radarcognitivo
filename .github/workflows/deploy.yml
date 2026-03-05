@@ -46,144 +46,146 @@ jobs:
           push: true
           tags: ${{ env.BACKEND_IMAGE }}:latest
 
-      - name: Deploy to VPS via SSH
-        uses: appleboy/ssh-action@v1
+      - name: Deploy RadarCognitivo to VPS (Docker Compose, idempotent, fallback 3001)
+        uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
-          port: 22
+          port: ${{ secrets.VPS_SSH_PORT || 22 }}
           envs: FRONTEND_IMAGE,BACKEND_IMAGE,GHCR_TOKEN,GHCR_USER,DB_PASSWORD
+          script_stop: true
           script: |
             set -euo pipefail
+            WORKDIR="/opt/radarcognitivo"
+            BRANCH="main"
+            PROJECT="radarcognitivo"
+            PRIMARY_PORT="3000"
+            FALLBACK_PORT="3001"
 
-            PROJECT=radarcognitivo
-            WORKDIR=/opt/radarcognitivo
-            BRANCH=main
-            PRIMARY_PORT=3000
-            FALLBACK_PORT=3001
-            REPO_URL="https://${GHCR_USER}:${GHCR_TOKEN}@github.com/thiagogiordano-code/radarcognitivo.git"
-
-            echo "== Deploy starting | project=${PROJECT} workdir=${WORKDIR} branch=${BRANCH} =="
+            echo "== Deploy: start =="
+            echo "WORKDIR=${WORKDIR} | BRANCH=${BRANCH} | PROJECT=${PROJECT}"
 
             # ── GHCR login ────────────────────────────────────────────────
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
 
-            # ── Git sync ──────────────────────────────────────────────────
-            if [ -d "$WORKDIR/.git" ]; then
-              cd "$WORKDIR"
-              git fetch --all
-              git reset --hard "origin/${BRANCH}"
-            else
-              git clone --branch "$BRANCH" "$REPO_URL" "$WORKDIR"
-              cd "$WORKDIR"
+            # ── Ensure repo exists (clone if missing) ─────────────────────
+            if [ ! -d "${WORKDIR}/.git" ]; then
+              echo "== Repo not found. Cloning =="
+              sudo mkdir -p "${WORKDIR}"
+              sudo chown -R "$USER:$USER" "${WORKDIR}"
+              git clone "${{ secrets.REPO_SSH_URL }}" "${WORKDIR}"
             fi
-            echo "== Git: $(git log -1 --format='%h %s') =="
 
-            # ── Garantir COMPOSE_PROJECT_NAME no .env (sem clobber) ───────
-            ENVFILE="$WORKDIR/.env"
-            touch "$ENVFILE"
-            if grep -q '^COMPOSE_PROJECT_NAME=' "$ENVFILE"; then
-              sed -i "s/^COMPOSE_PROJECT_NAME=.*/COMPOSE_PROJECT_NAME=${PROJECT}/" "$ENVFILE"
+            cd "${WORKDIR}"
+
+            echo "== Git sync =="
+            git fetch --all
+            git reset --hard "origin/${BRANCH}"
+
+            echo "== Ensure COMPOSE_PROJECT_NAME in .env (no clobber) =="
+            ENVFILE="${WORKDIR}/.env"
+            touch "${ENVFILE}"
+            if grep -q '^COMPOSE_PROJECT_NAME=' "${ENVFILE}"; then
+              sed -i "s/^COMPOSE_PROJECT_NAME=.*/COMPOSE_PROJECT_NAME=${PROJECT}/" "${ENVFILE}"
             else
-              echo "COMPOSE_PROJECT_NAME=${PROJECT}" >> "$ENVFILE"
+              echo "COMPOSE_PROJECT_NAME=${PROJECT}" >> "${ENVFILE}"
             fi
-            echo "== .env: $(grep COMPOSE_PROJECT_NAME $ENVFILE) =="
+            echo "== .env: COMPOSE_PROJECT_NAME=${PROJECT} =="
 
-            # ── Diagnóstico de versão (uma vez, barato) ───────────────────
-            echo "== docker compose version: $(docker compose version) =="
+            echo "== Docker/Compose versions =="
+            docker --version || true
+            docker compose version || true
 
-            # ── [1] Compose down ──────────────────────────────────────────
-            echo ">>> [1] Compose down --remove-orphans..."
+            echo "== [1] Compose down =="
             FRONTEND_IMAGE="$FRONTEND_IMAGE" BACKEND_IMAGE="$BACKEND_IMAGE" DB_PASSWORD="$DB_PASSWORD" \
-              docker compose -p "$PROJECT" down --remove-orphans --timeout 30 || true
+              docker compose -p "${PROJECT}" down --remove-orphans --timeout 30 || true
 
-            # ── [2] Remover containers publicando PRIMARY_PORT ────────────
-            echo ">>> [2] Verificando containers na porta ${PRIMARY_PORT}..."
-            CID=$(docker ps -q --filter "publish=${PRIMARY_PORT}" || true)
-            if [ -n "$CID" ]; then
-              echo "    Containers na porta ${PRIMARY_PORT}: $CID — removendo..."
-              docker stop $CID || true
-              docker rm -f $CID || true
-            else
-              echo "    Nenhum container publicando ${PRIMARY_PORT}."
-            fi
+            port_listening() {
+              local port="$1"
+              ss -ltn | grep -q ":${port} " 2>/dev/null
+            }
 
-            # ── [3] Loop aguardando porta livre ───────────────────────────
-            echo ">>> [3] Aguardando liberacao da porta ${PRIMARY_PORT}..."
-            TARGET_PORT="${PRIMARY_PORT}"
+            free_port_if_docker() {
+              local port="$1"
+              local cid
+              cid=$(docker ps -q --filter "publish=${port}" || true)
+              if [ -n "${cid}" ]; then
+                echo "Port ${port} is published by Docker container(s): ${cid}"
+                docker stop ${cid} || true
+                docker rm -f ${cid} || true
+                return 0
+              fi
+              return 1
+            }
+
+            echo "== [2] Free PRIMARY_PORT=${PRIMARY_PORT} if Docker publishes it =="
+            free_port_if_docker "${PRIMARY_PORT}" || true
+
+            echo "== [3] Wait loop (10x) for port ${PRIMARY_PORT} =="
             for i in $(seq 1 10); do
-              if ! ss -ltn | grep -q ":${PRIMARY_PORT} "; then
-                echo "    Porta ${PRIMARY_PORT} livre (tentativa ${i})."
+              free_port_if_docker "${PRIMARY_PORT}" || true
+              if port_listening "${PRIMARY_PORT}"; then
+                echo "Port ${PRIMARY_PORT} still listening (attempt ${i}/10)."
+                sleep 2
+              else
+                echo "Port ${PRIMARY_PORT} is free."
                 break
               fi
-              echo "    Tentativa ${i}/10: porta ${PRIMARY_PORT} ainda ocupada..."
-              CID=$(docker ps -q --filter "publish=${PRIMARY_PORT}" || true)
-              if [ -n "$CID" ]; then
-                echo "    Container Docker $CID ainda na porta — removendo..."
-                docker stop $CID || true
-                docker rm -f $CID || true
-              fi
-              sleep 2
             done
 
-            # ── [4] Decidir: livre | fallback ─────────────────────────────
-            if ss -ltn | grep -q ":${PRIMARY_PORT} "; then
-              CID=$(docker ps -q --filter "publish=${PRIMARY_PORT}" || true)
-              if [ -n "$CID" ]; then
-                echo "ERRO FATAL: container $CID ainda publica ${PRIMARY_PORT} apos 10 tentativas."
-                docker ps --filter "publish=${PRIMARY_PORT}" --format "table {{.ID}}\t{{.Names}}\t{{.Ports}}"
+            TARGET_PORT="${PRIMARY_PORT}"
+
+            echo "== [4] Decide: 3000 vs 3001 =="
+            if port_listening "${PRIMARY_PORT}"; then
+              if [ -z "$(docker ps -q --filter "publish=${PRIMARY_PORT}" || true)" ]; then
+                echo "Host process is holding port ${PRIMARY_PORT}. Falling back to ${FALLBACK_PORT}."
+                echo "Diagnostic ss -ltnp:"
+                ss -ltnp | grep ":${PRIMARY_PORT} " || true
+                echo "Diagnostic lsof:"
+                lsof -iTCP:${PRIMARY_PORT} -sTCP:LISTEN -n -P || true
+                TARGET_PORT="${FALLBACK_PORT}"
+              else
+                echo "Docker still publishes ${PRIMARY_PORT} after cleanup attempts. Failing."
+                docker ps --filter "publish=${PRIMARY_PORT}" --format "table {{.ID}}\t{{.Names}}\t{{.Ports}}" || true
                 exit 1
               fi
-              echo ">>> AVISO: porta ${PRIMARY_PORT} ocupada por processo host (nao Docker)."
-              echo "    --- ss -ltnp ---"
-              ss -ltnp | grep ":${PRIMARY_PORT} " || true
-              echo "    --- lsof ---"
-              lsof -iTCP:${PRIMARY_PORT} -sTCP:LISTEN -n -P 2>/dev/null || true
-              echo "    Ativando fallback: TARGET_PORT=${FALLBACK_PORT}"
-              TARGET_PORT="${FALLBACK_PORT}"
             fi
 
             echo ">>> [4] FRONTEND_HOST_PORT=${TARGET_PORT}"
 
-            # ── [5] Pull ──────────────────────────────────────────────────
-            echo ">>> [5] docker compose pull..."
+            echo "== [5] Pull images =="
             FRONTEND_IMAGE="$FRONTEND_IMAGE" BACKEND_IMAGE="$BACKEND_IMAGE" DB_PASSWORD="$DB_PASSWORD" \
-              docker compose -p "$PROJECT" pull
+              docker compose -p "${PROJECT}" pull || true
 
-            # ── [6] Up ────────────────────────────────────────────────────
-            echo ">>> [6] docker compose up (FRONTEND_HOST_PORT=${TARGET_PORT})..."
+            echo "== [6] Compose up =="
+            export FRONTEND_HOST_PORT="${TARGET_PORT}"
             if ! FRONTEND_IMAGE="$FRONTEND_IMAGE" BACKEND_IMAGE="$BACKEND_IMAGE" DB_PASSWORD="$DB_PASSWORD" \
-              FRONTEND_HOST_PORT="$TARGET_PORT" \
-              docker compose -p "$PROJECT" up -d --force-recreate --remove-orphans; then
-              echo "=== COMPOSE UP FALHOU — Diagnostico ==="
-              echo "--- compose config (200 linhas) ---"
+              docker compose -p "${PROJECT}" up -d --force-recreate --remove-orphans; then
+              echo "== ERROR: compose up failed. Diagnostics follow =="
+              echo "== docker compose config (first 200 lines) =="
               FRONTEND_IMAGE="$FRONTEND_IMAGE" BACKEND_IMAGE="$BACKEND_IMAGE" DB_PASSWORD="$DB_PASSWORD" \
-                FRONTEND_HOST_PORT="$TARGET_PORT" \
-                docker compose -p "$PROJECT" config 2>&1 | head -200 || true
-              echo "--- compose logs --tail=200 ---"
-              docker compose -p "$PROJECT" logs --tail=200 || true
-              echo "--- ss -ltnp porta ${PRIMARY_PORT} e ${FALLBACK_PORT} ---"
-              ss -ltnp | grep -E ":${PRIMARY_PORT} |:${FALLBACK_PORT} " || true
-              echo "--- docker ps publish=3000 ---"
+                FRONTEND_HOST_PORT="${TARGET_PORT}" \
+                docker compose -p "${PROJECT}" config | sed -n '1,200p' || true
+              echo "== compose logs (tail 200) =="
+              docker compose -p "${PROJECT}" logs --tail=200 || true
+              echo "== ss -ltnp (3000/3001) =="
+              ss -ltnp | grep -E ':(3000|3001) ' || true
+              echo "== docker ps publish 3000/3001 =="
               docker ps --filter "publish=3000" --format "table {{.ID}}\t{{.Names}}\t{{.Ports}}" || true
-              echo "--- docker ps publish=3001 ---"
               docker ps --filter "publish=3001" --format "table {{.ID}}\t{{.Names}}\t{{.Ports}}" || true
-              echo "--- docker compose version ---"
-              docker compose version || true
-              echo "--- pwd / ls ---"
-              pwd && ls -la
-              echo "--- docker info ---"
-              docker info 2>&1 | head -40 || true
+              echo "== docker info (summary) =="
+              docker info | sed -n '1,120p' || true
+              echo "== WORKDIR listing =="
+              ls -la
               exit 1
             fi
 
-            # ── [7] Pós-deploy ────────────────────────────────────────────
-            echo ">>> [7] Status pos-deploy:"
+            echo "== [7] Post-deploy =="
             sleep 3
-            docker compose -p "$PROJECT" ps
+            docker compose -p "${PROJECT}" ps || true
             docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | sed -n '1,80p'
-            echo "== Deploy concluido. FRONTEND_HOST_PORT=${TARGET_PORT} =="
+            echo "== Deploy concluded. FRONTEND_HOST_PORT=${TARGET_PORT} =="
 
         env:
           FRONTEND_IMAGE: ${{ env.FRONTEND_IMAGE }}
