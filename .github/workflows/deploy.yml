@@ -62,6 +62,10 @@ jobs:
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
 
             mkdir -p "$WORKDIR"
+
+            # Fixa o project name via .env — garante consistência mesmo sem -p
+            echo "COMPOSE_PROJECT_NAME=${PROJECT}" > "$WORKDIR/.env"
+
             cat > "$WORKDIR/docker-compose.yml" << 'COMPOSE'
             services:
               db:
@@ -102,65 +106,54 @@ jobs:
 
             cd "$WORKDIR"
 
-            echo ">>> [1] Removendo qualquer container publicando porta 3000..."
-            CONTAINERS_3000=$(docker ps --filter "publish=3000" --format "{{.ID}}")
-            if [ -n "$CONTAINERS_3000" ]; then
-              echo "    IDs na porta 3000: $CONTAINERS_3000"
-              docker stop $CONTAINERS_3000 2>/dev/null || true
-              docker rm -f $CONTAINERS_3000 2>/dev/null || true
+            echo ">>> [1] Parando qualquer container que publique porta 3000..."
+            CID=$(docker ps -q --filter "publish=3000" || true)
+            if [ -n "$CID" ]; then
+              echo "    Containers na porta 3000: $CID"
+              docker stop $CID || true
+              docker rm -f $CID || true
             fi
 
-            echo ">>> [2] Parando containers orfaos do repositorio (qualquer projeto)..."
-            ORPHAN_NAMES=$(docker ps --format "{{.Names}}" | grep -iE "radar|cognitivo" || true)
-            if [ -n "$ORPHAN_NAMES" ]; then
-              echo "    Orfaos: $ORPHAN_NAMES"
-              echo "$ORPHAN_NAMES" | xargs docker stop 2>/dev/null || true
-              echo "$ORPHAN_NAMES" | xargs docker rm -f 2>/dev/null || true
-            fi
-
-            echo ">>> [3] docker compose -p $PROJECT down --remove-orphans..."
+            echo ">>> [2] docker compose -p $PROJECT down --remove-orphans..."
             FRONTEND_IMAGE="$FRONTEND_IMAGE" BACKEND_IMAGE="$BACKEND_IMAGE" DB_PASSWORD="$DB_PASSWORD" \
               docker compose -p "$PROJECT" down --remove-orphans --timeout 30 || true
 
-            echo ">>> [4] Aguardando liberacao real da porta 3000..."
-            for i in $(seq 1 15); do
-              REMAINING=$(docker ps --filter "publish=3000" --format "{{.ID}}")
-              if [ -n "$REMAINING" ]; then
-                echo "    [i=$i] Container $REMAINING ainda na 3000, removendo..."
-                docker stop $REMAINING 2>/dev/null || true
-                docker rm -f $REMAINING 2>/dev/null || true
-                sleep 2
-                continue
+            echo ">>> [3] Aguardando liberacao da porta 3000..."
+            for i in {1..10}; do
+              if ! ss -ltn | grep -q ':3000'; then
+                echo "    Porta 3000 livre (tentativa $i)."
+                break
               fi
-              if ss -tlnp | grep -q ':3000 '; then
-                echo "    [i=$i] Processo do host ainda na 3000..."
+              echo "    Tentativa $i/10: porta 3000 ainda ocupada..."
+              CID=$(docker ps -q --filter "publish=3000" || true)
+              if [ -n "$CID" ]; then
+                docker stop $CID 2>/dev/null || true
+                docker rm -f $CID 2>/dev/null || true
+              else
                 lsof -ti:3000 2>/dev/null | xargs -r kill -9 2>/dev/null || true
-                sleep 2
-                continue
               fi
-              echo "    Porta 3000 livre na tentativa $i."
-              break
+              sleep 2
             done
 
-            if ss -tlnp | grep -q ':3000 '; then
-              echo "ERRO FATAL: porta 3000 ainda ocupada apos 15 tentativas."
-              ss -tlnp | grep ':3000' || true
-              docker ps --format "table {{.Names}}\t{{.Ports}}"
+            if ss -ltn | grep -q ':3000'; then
+              echo "ERRO FATAL: porta 3000 ainda ocupada. Diagnostico:"
+              ss -ltnp | grep ':3000' || true
+              docker ps --filter "publish=3000" --format "table {{.ID}}\t{{.Names}}\t{{.Ports}}" || true
               exit 1
             fi
 
-            echo ">>> [5] docker compose pull..."
+            echo ">>> [4] docker compose pull..."
             FRONTEND_IMAGE="$FRONTEND_IMAGE" BACKEND_IMAGE="$BACKEND_IMAGE" DB_PASSWORD="$DB_PASSWORD" \
               docker compose -p "$PROJECT" pull
 
-            echo ">>> [6] docker compose -p $PROJECT up -d --force-recreate --remove-orphans..."
+            echo ">>> [5] docker compose -p $PROJECT up -d --force-recreate --remove-orphans..."
             FRONTEND_IMAGE="$FRONTEND_IMAGE" BACKEND_IMAGE="$BACKEND_IMAGE" DB_PASSWORD="$DB_PASSWORD" \
               docker compose -p "$PROJECT" up -d --force-recreate --remove-orphans
 
-            echo ">>> [7] Status pos-deploy:"
+            echo ">>> [6] Status pos-deploy:"
             sleep 3
-            docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | head -20
             docker compose -p "$PROJECT" ps
+            docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | head -20
             docker compose -p "$PROJECT" logs --tail=50
 
         env:
