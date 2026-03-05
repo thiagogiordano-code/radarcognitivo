@@ -46,13 +46,25 @@ jobs:
           push: true
           tags: ${{ env.BACKEND_IMAGE }}:latest
 
+
+      - name: Diagnose deploy target
+        run: |
+          echo "Deploy target host configured"
+          echo "Testing connection parameters"
+          echo "VPS_HOST secret set: ${{ secrets.VPS_HOST != '' }}"
+          echo "VPS_USER secret set: ${{ secrets.VPS_USER != '' }}"
+          echo "VPS_SSH_KEY secret set: ${{ secrets.VPS_SSH_KEY != '' }}"
+          echo "VPS_SSH_PORT secret set: ${{ secrets.VPS_SSH_PORT != '' }}"
+          echo "REPO_SSH_URL secret set: ${{ secrets.REPO_SSH_URL != '' }}"
+          echo "DB_PASSWORD secret set: ${{ secrets.DB_PASSWORD != '' }}"
+
       - name: Deploy RadarCognitivo to VPS (Docker Compose, idempotent, fallback 3001)
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
-          port: ${{ secrets.VPS_SSH_PORT || 22 }}
+          port: ${{ secrets.VPS_SSH_PORT }}
           envs: FRONTEND_IMAGE,BACKEND_IMAGE,GHCR_TOKEN,GHCR_USER,DB_PASSWORD,REPO_SSH_URL
           script_stop: true
           script: |
