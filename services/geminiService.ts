@@ -10,8 +10,7 @@ declare global {
 const createClient = () => {
   const apiKey = window.__APP_CONFIG__?.GEMINI_API_KEY;
   if (!apiKey) {
-    console.error("API Key missing");
-    throw new Error("API Key is missing. Please configure your environment.");
+    throw new Error("GEMINI_API_KEY não configurada em /config.js");
   }
   return new GoogleGenAI({ apiKey });
 };
