@@ -102,27 +102,29 @@ jobs:
 
             cd "$WORKDIR"
 
-            echo "=== Containers rodando agora ==="
-            docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" || true
+            echo "=== DIAGNÓSTICO: o que está na porta 3000 ==="
+            ss -ltnp 2>/dev/null | grep ':3000' || echo "(ss: nada)"
+            docker ps -a --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null | grep -E "3000|NAMES" || echo "(docker: nada)"
 
-            echo "=== Parando containers anteriores ==="
-            # 1. Container standalone do deploy antigo (docker run, --restart unless-stopped)
-            docker stop radarcognitivo 2>/dev/null || true
-            docker rm -f radarcognitivo 2>/dev/null || true
+            echo "=== LIMPEZA AGRESSIVA ==="
+            # Containers pelo nome (todas as variações conhecidas)
+            for cname in radarcognitivo radarcognitivo-frontend-1 radarcognitivo-backend-1; do
+              docker rm -f "$cname" 2>/dev/null && echo "Removido: $cname" || true
+            done
 
-            # 2. Projeto compose anterior
+            # Projeto compose anterior
             REGISTRY="${REGISTRY}" GEMINI_API_KEY="${GEMINI_API_KEY}" \
-              docker compose -p "$PROJECT" down --remove-orphans 2>/dev/null || true
+              docker compose -p "$PROJECT" down --remove-orphans --timeout 10 2>/dev/null || true
 
-            # 3. Qualquer outro container ainda na porta 3000
-            CID=$(docker ps -q --filter "publish=3000" 2>/dev/null)
-            if [ -n "${CID}" ]; then
-              echo "Kill forçado porta 3000: ${CID}"
-              docker rm -f ${CID} 2>/dev/null || true
-            fi
+            # Qualquer container ainda mapeando porta 3000
+            CID=$(docker ps -aq --filter "publish=3000" 2>/dev/null)
+            [ -n "${CID}" ] && docker rm -f ${CID} 2>/dev/null && echo "Removido por porta: ${CID}" || true
 
-            echo "=== Porta 3000 após limpeza ==="
-            docker ps --filter "publish=3000" || true
+            # Processo host (não-Docker) usando a porta — kill forçado
+            fuser -k 3000/tcp 2>/dev/null && echo "fuser: processo host na 3000 eliminado" || true
+
+            echo "=== VERIFICAÇÃO PÓS-LIMPEZA ==="
+            ss -ltnp 2>/dev/null | grep ':3000' && echo "AVISO: porta 3000 ainda ocupada!" || echo "OK: porta 3000 livre"
 
             echo "=== Pull ==="
             REGISTRY="${REGISTRY}" docker compose -p "$PROJECT" pull
