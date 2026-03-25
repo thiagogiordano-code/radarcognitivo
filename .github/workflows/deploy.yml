@@ -1,43 +1,57 @@
-name: Deploy to VPS
+name: Build e Deploy
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
   workflow_dispatch:
 
 env:
-  IMAGE_NAME: ghcr.io/${{ github.repository }}
+  IMAGE_NAME: ghcr.io/thiagogiordano-code/radarcognitivo
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  build-and-deploy:
+  build-and-push:
     runs-on: ubuntu-latest
-
     permissions:
       contents: read
       packages: write
-
+    outputs:
+      image_tag: ${{ steps.meta.outputs.version }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v5
 
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
+      - name: Login no GHCR
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push Docker image
+      - name: Extrair metadados da imagem
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest
+            type=sha
+
+      - name: Build e push da imagem
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
-          tags: |
-            ${{ env.IMAGE_NAME }}:latest
-            ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
 
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    steps:
       - name: Deploy to VPS via SSH
         uses: appleboy/ssh-action@v1
         with:
@@ -45,7 +59,7 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: 22
-          envs: IMAGE_NAME,GITHUB_SHA,GHCR_TOKEN,GHCR_USER
+          envs: IMAGE_NAME,GHCR_TOKEN,GHCR_USER
           script: |
             set -euo pipefail
             IMAGE="${IMAGE_NAME}:latest"
@@ -54,17 +68,14 @@ jobs:
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
 
             echo "=== Parando containers existentes ==="
-            # Para container simples (deploy anterior)
             docker stop radarcognitivo 2>/dev/null || true
             docker rm radarcognitivo 2>/dev/null || true
 
-            # Para docker-compose do deploy anterior (projeto radarcognitivo)
             if docker compose -p radarcognitivo ps -q 2>/dev/null | grep -q .; then
               echo "Parando docker-compose do projeto radarcognitivo..."
               docker compose -p radarcognitivo down --remove-orphans --timeout 20 || true
             fi
 
-            # Libera porta 3000 se ainda ocupada
             CID=$(docker ps -q --filter "publish=3000" 2>/dev/null || true)
             if [ -n "$CID" ]; then
               echo "Parando containers na porta 3000: $CID"
@@ -78,14 +89,12 @@ jobs:
                 echo "Porta 3000 livre."
                 break
               fi
-              echo "Tentativa $i/10 — porta 3000 ainda ocupada, aguardando..."
+              echo "Tentativa $i/10 — aguardando..."
               sleep 3
             done
 
-            echo "=== Pull da imagem ==="
+            echo "=== Pull e start ==="
             docker pull "$IMAGE"
-
-            echo "=== Iniciando container ==="
             docker run -d \
               --name radarcognitivo \
               --restart unless-stopped \
@@ -98,6 +107,5 @@ jobs:
             echo "=== Deploy concluído ==="
         env:
           IMAGE_NAME: ${{ env.IMAGE_NAME }}
-          GITHUB_SHA: ${{ github.sha }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GHCR_USER: ${{ github.actor }}
