@@ -102,13 +102,24 @@ jobs:
 
             cd "$WORKDIR"
 
+            echo "=== Parando containers anteriores ==="
+            REGISTRY="${REGISTRY}" GEMINI_API_KEY="${GEMINI_API_KEY}" \
+              docker compose -p "$PROJECT" down --remove-orphans 2>/dev/null || true
+
+            CID=$(docker ps -q --filter "publish=3000" 2>/dev/null)
+            if [ -n "${CID}" ]; then
+              echo "Forçando parada de containers na porta 3000: ${CID}"
+              docker stop ${CID} 2>/dev/null || true
+              docker rm -f ${CID} 2>/dev/null || true
+            fi
+
             echo "=== Pull ==="
             REGISTRY="${REGISTRY}" docker compose -p "$PROJECT" pull
 
             echo "=== Up ==="
             REGISTRY="${REGISTRY}" \
             GEMINI_API_KEY="${GEMINI_API_KEY}" \
-              docker compose -p "$PROJECT" up -d --remove-orphans
+              docker compose -p "$PROJECT" up -d
 
             sleep 3
 
