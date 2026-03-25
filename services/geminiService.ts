@@ -1,5 +1,5 @@
-import { GoogleGenAI, Modality } from "@google/genai";
-import { UserProfile, VarkType, KolbType } from "../types";
+import { GoogleGenAI } from "@google/genai";
+import { UserProfile } from "../types";
 
 const createClient = () => {
   if (!process.env.API_KEY) {
@@ -9,32 +9,6 @@ const createClient = () => {
   return new GoogleGenAI({ apiKey: process.env.API_KEY });
 };
 
-export const generateAudioIntro = async (text: string): Promise<string | null> => {
-  try {
-    const ai = createClient();
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash-preview-tts",
-      contents: [{ parts: [{ text }] }],
-      config: {
-        responseModalities: [Modality.AUDIO],
-        speechConfig: {
-          voiceConfig: {
-            prebuiltVoiceConfig: { voiceName: 'Kore' }, // Deep, calm voice suitable for a professor
-          },
-        },
-      },
-    });
-
-    const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-    if (base64Audio) {
-      return `data:audio/wav;base64,${base64Audio}`;
-    }
-    return null;
-  } catch (error) {
-    console.error("Error generating audio:", error);
-    return null;
-  }
-};
 
 export const generateProfileAnalysis = async (profile: UserProfile): Promise<string> => {
   const ai = createClient();
