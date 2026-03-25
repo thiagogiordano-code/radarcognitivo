@@ -46,8 +46,6 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
 
   deploy:
     runs-on: ubuntu-latest
@@ -64,15 +62,43 @@ jobs:
           key: ${{ secrets.VPS_SSH_KEY }}
           port: 22
           command_timeout: 5m
-          envs: GHCR_TOKEN,GHCR_USER
+          envs: IMAGE_NAME,GHCR_TOKEN,GHCR_USER,GEMINI_API_KEY
           script: |
             set -eo pipefail
-            whoami
-            hostname
-            docker --version
-            docker ps
+            IMAGE="${IMAGE_NAME}:latest"
+
+            echo "=== Login GHCR ==="
             echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USER}" --password-stdin
-            docker pull ghcr.io/thiagogiordano-code/radarcognitivo:latest
+
+            echo "=== Parando containers existentes ==="
+            docker stop radarcognitivo 2>/dev/null || true
+            docker rm   radarcognitivo 2>/dev/null || true
+            if docker compose -p radarcognitivo ps -q 2>/dev/null | grep -q .; then
+              docker compose -p radarcognitivo down --remove-orphans --timeout 20 || true
+            fi
+            CID=$(docker ps -q --filter "publish=3000" 2>/dev/null)
+            if [ -n "${CID}" ]; then
+              docker stop ${CID} || true
+              docker rm -f ${CID} || true
+            fi
+
+            echo "=== Pull ==="
+            docker pull "${IMAGE}"
+
+            echo "=== Start ==="
+            docker run -d \
+              --name radarcognitivo \
+              --restart unless-stopped \
+              -p 3000:80 \
+              -e GEMINI_API_KEY="${GEMINI_API_KEY}" \
+              "${IMAGE}"
+
+            sleep 2
+            docker ps --filter "name=radarcognitivo" \
+              --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+            echo "=== Deploy concluído ==="
         env:
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GHCR_USER: ${{ github.actor }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}

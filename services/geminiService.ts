@@ -1,12 +1,19 @@
 import { GoogleGenAI } from "@google/genai";
 import { UserProfile } from "../types";
 
+declare global {
+  interface Window {
+    __APP_CONFIG__?: { GEMINI_API_KEY?: string };
+  }
+}
+
 const createClient = () => {
-  if (!process.env.API_KEY) {
+  const apiKey = window.__APP_CONFIG__?.GEMINI_API_KEY;
+  if (!apiKey) {
     console.error("API Key missing");
     throw new Error("API Key is missing. Please configure your environment.");
   }
-  return new GoogleGenAI({ apiKey: process.env.API_KEY });
+  return new GoogleGenAI({ apiKey });
 };
 
 
