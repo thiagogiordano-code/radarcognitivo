@@ -1,52 +1,155 @@
-name: Deploy to VPS
+name: Build e Deploy
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
   workflow_dispatch:
 
 env:
-  IMAGE_NAME: ghcr.io/${{ github.repository }}
+  REGISTRY: ghcr.io/thiagogiordano-code/radarcognitivo
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  build-and-deploy:
+  build-frontend:
     runs-on: ubuntu-latest
-
     permissions:
       contents: read
       packages: write
-
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
+      - name: Login no GHCR
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v5
+      - name: Build e push frontend
+        uses: docker/build-push-action@v6
         with:
           context: .
           push: true
-          tags: |
-            ${{ env.IMAGE_NAME }}:latest
-            ${{ env.IMAGE_NAME }}:${{ github.sha }}
-          build-args: |
-            GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
+          tags: ${{ env.REGISTRY }}:frontend
 
+  build-backend:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Login no GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build e push backend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./server
+          push: true
+          tags: ${{ env.REGISTRY }}:backend
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: [build-frontend, build-backend]
+    permissions:
+      contents: read
+      packages: read
+    steps:
       - name: Deploy to VPS via SSH
-        uses: appleboy/ssh-action@v1
+        uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: 22
+          command_timeout: 10m
+          envs: REGISTRY,GHCR_TOKEN,GHCR_USER,GEMINI_API_KEY
           script: |
-            docker pull ${{ env.IMAGE_NAME }}:latest
-            docker stop radarcognitivo || true
-            docker rm radarcognitivo || true
-            docker run -d --name radarcognitivo --restart unless-stopped -p 3000:80 ${{ env.IMAGE_NAME }}:latest
+            set -eo pipefail
+            PROJECT=radarcognitivo
+            WORKDIR=/opt/radarcognitivo
+
+            echo "=== Login GHCR ==="
+            echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USER}" --password-stdin
+
+            mkdir -p "$WORKDIR"
+
+            cat > "$WORKDIR/docker-compose.yml" << 'COMPOSE'
+            services:
+              backend:
+                image: ${REGISTRY}:backend
+                environment:
+                  - GEMINI_API_KEY=${GEMINI_API_KEY}
+                expose:
+                  - "4000"
+                restart: unless-stopped
+
+              frontend:
+                image: ${REGISTRY}:frontend
+                ports:
+                  - "3000:80"
+                depends_on:
+                  - backend
+                restart: unless-stopped
+            COMPOSE
+
+            cd "$WORKDIR"
+
+            echo "=== DIAGNÓSTICO: o que está na porta 3000 ==="
+            ss -ltnp 2>/dev/null | grep ':3000' || echo "(ss: nada)"
+            docker ps -a --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null | grep -E "3000|NAMES" || echo "(docker: nada)"
+
+            echo "=== LIMPEZA AGRESSIVA ==="
+            # Containers pelo nome (todas as variações conhecidas)
+            for cname in radarcognitivo radarcognitivo-frontend-1 radarcognitivo-backend-1; do
+              docker rm -f "$cname" 2>/dev/null && echo "Removido: $cname" || true
+            done
+
+            # Projeto compose anterior
+            REGISTRY="${REGISTRY}" GEMINI_API_KEY="${GEMINI_API_KEY}" \
+              docker compose -p "$PROJECT" down --remove-orphans --timeout 10 2>/dev/null || true
+
+            # Qualquer container ainda mapeando porta 3000
+            CID=$(docker ps -aq --filter "publish=3000" 2>/dev/null)
+            [ -n "${CID}" ] && docker rm -f ${CID} 2>/dev/null && echo "Removido por porta: ${CID}" || true
+
+            # Processo host (não-Docker) usando a porta — kill forçado
+            fuser -k 3000/tcp 2>/dev/null && echo "fuser: processo host na 3000 eliminado" || true
+
+            echo "=== VERIFICAÇÃO PÓS-LIMPEZA ==="
+            ss -ltnp 2>/dev/null | grep ':3000' && echo "AVISO: porta 3000 ainda ocupada!" || echo "OK: porta 3000 livre"
+
+            echo "=== Pull ==="
+            REGISTRY="${REGISTRY}" docker compose -p "$PROJECT" pull
+
+            echo "=== Up ==="
+            REGISTRY="${REGISTRY}" \
+            GEMINI_API_KEY="${GEMINI_API_KEY}" \
+              docker compose -p "$PROJECT" up -d --force-recreate --remove-orphans
+
+            sleep 3
+
+            echo "=== Status ==="
+            REGISTRY="${REGISTRY}" \
+            GEMINI_API_KEY="${GEMINI_API_KEY}" \
+              docker compose -p "$PROJECT" ps
+
+            echo "=== Logs backend ==="
+            docker logs radarcognitivo-backend-1 --tail=20 2>/dev/null || \
+            docker compose -p "$PROJECT" logs backend --tail=20 || true
+
+            echo "=== Deploy concluído ==="
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
