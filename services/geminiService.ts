@@ -4,7 +4,7 @@ import { UserProfile, VarkType, KolbType } from "../types";
 const createClient = () => {
   if (!process.env.API_KEY) {
     console.error("API Key missing");
-    throw new Error("API Key is missing. Please configuration your environment.");
+    throw new Error("API Key is missing. Please configure your environment.");
   }
   return new GoogleGenAI({ apiKey: process.env.API_KEY });
 };
@@ -57,7 +57,7 @@ export const generateProfileAnalysis = async (profile: UserProfile): Promise<str
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-3-pro-preview", // Thinking model
+      model: "gemini-2.5-pro", // Thinking model
       contents: prompt,
       config: {
         thinkingConfig: { thinkingBudget: 32768 }, // Max thinking for deep connection
