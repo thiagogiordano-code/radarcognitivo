@@ -57,73 +57,15 @@ jobs:
       packages: read
     steps:
       - name: Deploy to VPS via SSH
-        uses: appleboy/ssh-action@v1
+        uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: 22
           command_timeout: 5m
-          envs: IMAGE_NAME,GHCR_TOKEN,GHCR_USER
           script: |
-            set -eo pipefail
-
-            # Validação: IMAGE_NAME deve estar definido
-            if [ -z "${IMAGE_NAME:-}" ]; then
-              echo "ERRO: IMAGE_NAME não foi passado para o script." >&2
-              exit 1
-            fi
-
-            IMAGE="${IMAGE_NAME}:latest"
-            echo "=== Imagem alvo: ${IMAGE} ==="
-
-            echo "=== Login GHCR ==="
-            echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USER}" --password-stdin
-
-            echo "=== Parando containers existentes ==="
-            docker stop radarcognitivo 2>/dev/null || true
-            docker rm   radarcognitivo 2>/dev/null || true
-
-            # Para docker-compose legado (projeto radarcognitivo do deploy anterior)
-            if docker compose -p radarcognitivo ps -q 2>/dev/null | grep -q .; then
-              echo "Parando docker-compose do projeto radarcognitivo..."
-              docker compose -p radarcognitivo down --remove-orphans --timeout 20 || true
-            fi
-
-            # Libera qualquer container ainda na porta 3000
-            CID=$(docker ps -q --filter "publish=3000" 2>/dev/null)
-            if [ -n "${CID}" ]; then
-              echo "Parando containers na porta 3000: ${CID}"
-              docker stop ${CID} || true
-              docker rm -f ${CID} || true
-            fi
-
-            echo "=== Aguardando porta 3000 ficar livre ==="
-            for i in $(seq 1 10); do
-              if ! ss -ltn 2>/dev/null | grep -q ':3000 '; then
-                echo "Porta 3000 livre."
-                break
-              fi
-              echo "Tentativa ${i}/10 — aguardando 3s..."
-              sleep 3
-            done
-
-            echo "=== Pull da imagem ==="
-            docker pull "${IMAGE}"
-
-            echo "=== Iniciando container ==="
-            docker run -d \
-              --name radarcognitivo \
-              --restart unless-stopped \
-              -p 3000:80 \
-              "${IMAGE}"
-
-            echo "=== Status final ==="
-            sleep 2
-            docker ps --filter "name=radarcognitivo" \
-              --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
-            echo "=== Deploy concluído ==="
-        env:
-          IMAGE_NAME: ${{ env.IMAGE_NAME }}
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GHCR_USER: ${{ github.actor }}
+            whoami
+            hostname
+            pwd
+            docker --version
