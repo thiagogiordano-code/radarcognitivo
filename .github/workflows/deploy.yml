@@ -7,17 +7,16 @@ on:
   workflow_dispatch:
 
 env:
-  IMAGE_NAME: ghcr.io/thiagogiordano-code/radarcognitivo
+  FRONTEND_IMAGE: ghcr.io/thiagogiordano-code/radarcognitivo/frontend
+  BACKEND_IMAGE: ghcr.io/thiagogiordano-code/radarcognitivo/backend
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  build-and-push:
+  build-frontend:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-    outputs:
-      image_digest: ${{ steps.build.outputs.digest }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -29,17 +28,16 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extrair metadados da imagem
+      - name: Extrair metadados
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.IMAGE_NAME }}
+          images: ${{ env.FRONTEND_IMAGE }}
           tags: |
             type=raw,value=latest
             type=sha
 
-      - name: Build e push da imagem
-        id: build
+      - name: Build e push frontend
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -47,9 +45,42 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
+  build-backend:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Login no GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extrair metadados
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.BACKEND_IMAGE }}
+          tags: |
+            type=raw,value=latest
+            type=sha
+
+      - name: Build e push backend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./server
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
   deploy:
     runs-on: ubuntu-latest
-    needs: build-and-push
+    needs: [build-frontend, build-backend]
     permissions:
       contents: read
       packages: read
@@ -61,44 +92,53 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: 22
-          command_timeout: 5m
-          envs: IMAGE_NAME,GHCR_TOKEN,GHCR_USER,GEMINI_API_KEY
+          command_timeout: 10m
+          envs: FRONTEND_IMAGE,BACKEND_IMAGE,GHCR_TOKEN,GHCR_USER,GEMINI_API_KEY
           script: |
             set -eo pipefail
-            IMAGE="${IMAGE_NAME}:latest"
+            PROJECT=radarcognitivo
+            WORKDIR=/opt/radarcognitivo
 
             echo "=== Login GHCR ==="
             echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USER}" --password-stdin
 
-            echo "=== Parando containers existentes ==="
-            docker stop radarcognitivo 2>/dev/null || true
-            docker rm   radarcognitivo 2>/dev/null || true
-            if docker compose -p radarcognitivo ps -q 2>/dev/null | grep -q .; then
-              docker compose -p radarcognitivo down --remove-orphans --timeout 20 || true
-            fi
-            CID=$(docker ps -q --filter "publish=3000" 2>/dev/null)
-            if [ -n "${CID}" ]; then
-              docker stop ${CID} || true
-              docker rm -f ${CID} || true
-            fi
+            mkdir -p "$WORKDIR"
+
+            cat > "$WORKDIR/docker-compose.yml" << 'COMPOSE'
+            services:
+              backend:
+                image: ${BACKEND_IMAGE}:latest
+                environment:
+                  - GEMINI_API_KEY=${GEMINI_API_KEY}
+                restart: unless-stopped
+
+              frontend:
+                image: ${FRONTEND_IMAGE}:latest
+                ports:
+                  - "3000:80"
+                depends_on:
+                  - backend
+                restart: unless-stopped
+            COMPOSE
+
+            cd "$WORKDIR"
 
             echo "=== Pull ==="
-            docker pull "${IMAGE}"
+            FRONTEND_IMAGE="${FRONTEND_IMAGE}" BACKEND_IMAGE="${BACKEND_IMAGE}" \
+              docker compose -p "$PROJECT" pull
 
-            echo "=== Start ==="
-            docker run -d \
-              --name radarcognitivo \
-              --restart unless-stopped \
-              -p 3000:80 \
-              -e GEMINI_API_KEY="${GEMINI_API_KEY}" \
-              "${IMAGE}"
+            echo "=== Up ==="
+            FRONTEND_IMAGE="${FRONTEND_IMAGE}" \
+            BACKEND_IMAGE="${BACKEND_IMAGE}" \
+            GEMINI_API_KEY="${GEMINI_API_KEY}" \
+              docker compose -p "$PROJECT" up -d --remove-orphans
 
-            sleep 2
-            docker ps --filter "name=radarcognitivo" \
-              --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+            sleep 3
+            docker compose -p "$PROJECT" ps
             echo "=== Deploy concluído ==="
         env:
-          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+          FRONTEND_IMAGE: ${{ env.FRONTEND_IMAGE }}
+          BACKEND_IMAGE: ${{ env.BACKEND_IMAGE }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GHCR_USER: ${{ github.actor }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
