@@ -102,16 +102,27 @@ jobs:
 
             cd "$WORKDIR"
 
+            echo "=== Containers rodando agora ==="
+            docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" || true
+
             echo "=== Parando containers anteriores ==="
+            # 1. Container standalone do deploy antigo (docker run, --restart unless-stopped)
+            docker stop radarcognitivo 2>/dev/null || true
+            docker rm -f radarcognitivo 2>/dev/null || true
+
+            # 2. Projeto compose anterior
             REGISTRY="${REGISTRY}" GEMINI_API_KEY="${GEMINI_API_KEY}" \
               docker compose -p "$PROJECT" down --remove-orphans 2>/dev/null || true
 
+            # 3. Qualquer outro container ainda na porta 3000
             CID=$(docker ps -q --filter "publish=3000" 2>/dev/null)
             if [ -n "${CID}" ]; then
-              echo "Forçando parada de containers na porta 3000: ${CID}"
-              docker stop ${CID} 2>/dev/null || true
+              echo "Kill forçado porta 3000: ${CID}"
               docker rm -f ${CID} 2>/dev/null || true
             fi
+
+            echo "=== Porta 3000 após limpeza ==="
+            docker ps --filter "publish=3000" || true
 
             echo "=== Pull ==="
             REGISTRY="${REGISTRY}" docker compose -p "$PROJECT" pull
