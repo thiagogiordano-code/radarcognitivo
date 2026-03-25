@@ -7,8 +7,8 @@ on:
   workflow_dispatch:
 
 env:
-  FRONTEND_IMAGE: ghcr.io/thiagogiordano-code/radarcognitivo/frontend
-  BACKEND_IMAGE: ghcr.io/thiagogiordano-code/radarcognitivo/backend
+  FRONTEND_IMAGE: ghcr.io/thiagogiordano-code/radarcognitivo
+  BACKEND_IMAGE: ghcr.io/thiagogiordano-code/radarcognitivo-backend
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
@@ -134,7 +134,16 @@ jobs:
               docker compose -p "$PROJECT" up -d --remove-orphans
 
             sleep 3
-            docker compose -p "$PROJECT" ps
+
+            echo "=== Status ==="
+            FRONTEND_IMAGE="${FRONTEND_IMAGE}" \
+            BACKEND_IMAGE="${BACKEND_IMAGE}" \
+            GEMINI_API_KEY="${GEMINI_API_KEY}" \
+              docker compose -p "$PROJECT" ps
+
+            echo "=== Logs backend (últimas 20 linhas) ==="
+            docker compose -p "$PROJECT" logs backend --tail=20 || true
+
             echo "=== Deploy concluído ==="
         env:
           FRONTEND_IMAGE: ${{ env.FRONTEND_IMAGE }}
