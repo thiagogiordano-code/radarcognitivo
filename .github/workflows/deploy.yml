@@ -126,14 +126,18 @@ jobs:
             docker ps --format 'table {{.Names}}\t{{.Ports}}'
             ss -ltnp | grep -E ':3000|:8080|:4000' || true
             curl -I "http://localhost:${FRONTEND_PORT}" || true
-            echo "=== Aguardando backend inicializar (5s) ==="
-            sleep 5
+            echo "=== Aguardando backend inicializar (8s) ==="
+            sleep 8
+            echo "=== Status dos containers ==="
+            docker compose -p "$PROJECT" ps
+            echo "=== Logs backend (arranque) ==="
+            docker logs radarcognitivo-backend-1 --tail=100 2>&1 || true
+            echo "=== Portas em uso no container backend ==="
+            docker exec radarcognitivo-backend-1 ss -ltnp 2>/dev/null || docker exec radarcognitivo-backend-1 netstat -ltnp 2>/dev/null || true
             echo "=== ENV backend (GEMINI_API_KEY) ==="
             docker exec radarcognitivo-backend-1 printenv | grep GEMINI || echo "GEMINI_API_KEY nao encontrada"
             echo "=== Health check backend ==="
             docker exec radarcognitivo-backend-1 wget -qO- http://localhost:4000/health 2>&1 || true
-            echo "=== Logs backend (arranque) ==="
-            docker logs radarcognitivo-backend-1 --tail=50 2>&1 || true
             echo "=== Teste POST /api/analyze ==="
             docker exec radarcognitivo-backend-1 wget -qO- \
               --header='Content-Type: application/json' \
