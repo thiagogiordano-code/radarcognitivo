@@ -136,13 +136,19 @@ jobs:
             docker exec radarcognitivo-backend-1 ss -ltnp 2>/dev/null || docker exec radarcognitivo-backend-1 netstat -ltnp 2>/dev/null || true
             echo "=== ENV backend (GEMINI_API_KEY) ==="
             docker exec radarcognitivo-backend-1 printenv | grep GEMINI || echo "GEMINI_API_KEY nao encontrada"
-            echo "=== Health check backend ==="
-            docker exec radarcognitivo-backend-1 wget -qO- http://localhost:4000/health 2>&1 || true
-            echo "=== Teste POST /api/analyze ==="
+            echo "=== Health check backend (IPv4 direto) ==="
+            docker exec radarcognitivo-backend-1 wget -qO- http://127.0.0.1:4000/health 2>&1 || true
+            echo "=== Teste POST direto no backend (IPv4) ==="
             docker exec radarcognitivo-backend-1 wget -qO- \
               --header='Content-Type: application/json' \
               --post-data='{"profile":{"course":"Teste","dominantVark":["Visual"],"dominantKolb":["Ativo"]}}' \
-              http://localhost:4000/api/analyze 2>&1 || true
+              http://127.0.0.1:4000/api/analyze 2>&1 || true
+            echo "=== Teste POST via nginx (caminho real do usuário) ==="
+            curl -s -X POST "http://localhost:${FRONTEND_PORT}/api/analyze" \
+              -H 'Content-Type: application/json' \
+              -d '{"profile":{"course":"Engenharia","dominantVark":["Visual"],"dominantKolb":["Ativo"]}}' \
+              --max-time 30 || true
+            echo ""
             echo "=== Logs backend (pós-teste) ==="
-            docker logs radarcognitivo-backend-1 --tail=20 2>&1 || true
+            docker logs radarcognitivo-backend-1 --tail=30 2>&1 || true
             echo "FRONTEND_PORT=${FRONTEND_PORT}"
