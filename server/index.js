@@ -56,4 +56,8 @@ Escreva uma análise concisa (aprox. 150 palavras) e estratégica:
   }
 });
 
-app.listen(4000, () => console.log('Backend rodando na porta 4000'));
+app.listen(4000, '0.0.0.0', () => {
+  console.log('[startup] Backend ouvindo em 0.0.0.0:4000');
+  console.log('[startup] GEMINI_API_KEY configurada:', !!process.env.GEMINI_API_KEY);
+  console.log('[startup] Rotas registradas: GET /health, POST /api/analyze');
+});
