@@ -89,6 +89,8 @@ jobs:
                 image: ${REGISTRY}:backend
                 environment:
                   - GEMINI_API_KEY=${GEMINI_API_KEY}
+                expose:
+                  - "4000"
                 restart: unless-stopped
 
               frontend:
@@ -132,7 +134,7 @@ jobs:
             echo "=== Up ==="
             REGISTRY="${REGISTRY}" \
             GEMINI_API_KEY="${GEMINI_API_KEY}" \
-              docker compose -p "$PROJECT" up -d
+              docker compose -p "$PROJECT" up -d --force-recreate --remove-orphans
 
             sleep 3
 
