@@ -118,23 +118,28 @@ jobs:
             ls /etc/systemd/system/ 2>/dev/null | grep -Ei 'clau|radar|node' || echo "(nenhum)"
 
             # ────────────────────────────────────────────────────────────────
-            # FASE 3: MATAR E DESABILITAR PROCESSO HOST
+            # FASE 3: DESABILITAR SERVIÇO + MATAR PID EXATO (sem pkill amplo)
             # ────────────────────────────────────────────────────────────────
-            echo "=== Desabilitando serviços gerenciadores ==="
-            for svc in $(systemctl list-units --type=service --all 2>/dev/null \
-                         | grep -Ei 'clau|radar' | awk '{print $1}' || true); do
-              echo "  stop + disable: $svc"
-              systemctl stop "$svc" 2>/dev/null || true
-              systemctl disable "$svc" 2>/dev/null || true
-            done
+            echo "=== Stop + disable + mask radarcognitivo.service ==="
+            systemctl stop radarcognitivo.service 2>/dev/null || true
+            systemctl disable radarcognitivo.service 2>/dev/null || true
+            systemctl mask radarcognitivo.service 2>/dev/null || true
+            systemctl reset-failed radarcognitivo.service 2>/dev/null || true
 
-            echo "=== pm2: parar e salvar lista vazia ==="
+            echo "=== PM2: remover mipt-rc e claude-app ==="
             if command -v pm2 &>/dev/null; then
-              pm2 list 2>/dev/null | grep -i 'clau\|radar\|node' && pm2 delete all 2>/dev/null && pm2 save 2>/dev/null || true
+              pm2 delete mipt-rc 2>/dev/null || true
+              pm2 delete claude-app 2>/dev/null || true
+              pm2 save --force 2>/dev/null || true
             fi
 
-            echo "=== pkill node clau ==="
-            pkill -9 -f 'node.*/clau' 2>/dev/null && echo "pkill: morto" || echo "pkill: nada"
+            echo "=== Matar PID exato na porta 3000 ==="
+            KILL_PID=$(ss -ltnp 2>/dev/null | grep ':3000' | grep -oP 'pid=\K[0-9]+' | head -1 || true)
+            if [ -n "$KILL_PID" ]; then
+              echo "Matando PID=$KILL_PID"
+              ps -fp "$KILL_PID" 2>/dev/null || true
+              kill -9 "$KILL_PID" 2>/dev/null || true
+            fi
 
             echo "=== fuser -k 3000/tcp ==="
             fuser -k 3000/tcp 2>/dev/null && echo "fuser: porta liberada" || true
@@ -143,6 +148,14 @@ jobs:
 
             echo "========== ss APÓS LIMPEZA =========="
             ss -ltnp 2>/dev/null | grep ':3000' || echo "OK: porta 3000 livre"
+
+            REMAINING_PID=$(ss -ltnp 2>/dev/null | grep ':3000' | grep -oP 'pid=\K[0-9]+' | head -1 || true)
+            if [ -n "$REMAINING_PID" ]; then
+              echo "AVISO: porta ainda ocupada por PID=$REMAINING_PID — segunda tentativa"
+              kill -9 "$REMAINING_PID" 2>/dev/null || true
+              sleep 1
+              ss -ltnp 2>/dev/null | grep ':3000' || echo "OK: porta 3000 livre após segunda tentativa"
+            fi
 
             # ────────────────────────────────────────────────────────────────
             # FASE 4: LOGIN GHCR + PREPARAR COMPOSE
