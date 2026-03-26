@@ -144,29 +144,44 @@ jobs:
             ss -ltnp | grep ':3000' || echo "OK: porta 3000 livre"
 
             # ────────────────────────────────────────────────────────────────
-            # FASE 4: LOGIN GHCR + PREPARAR COMPOSE
+            # FASE 4: DETERMINAR PORTA + LOGIN GHCR + GERAR COMPOSE FINAL
             # ────────────────────────────────────────────────────────────────
+            # Decide porta ANTES de gerar o compose — sem placeholder, sem sed
+            if ss -ltnp 2>/dev/null | grep -q ':3000'; then
+              FRONTEND_PORT=8080
+              echo "FALLBACK: porta 3000 ainda ocupada, usando 8080"
+            else
+              FRONTEND_PORT=3000
+              echo "OK: porta 3000 livre, usando 3000"
+            fi
+
             echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USER}" --password-stdin
             mkdir -p "$WORKDIR"
 
-            cat > "$WORKDIR/docker-compose.yml" << 'COMPOSE'
-            services:
-              backend:
-                image: ${REGISTRY}:backend
-                environment:
-                  - GEMINI_API_KEY=${GEMINI_API_KEY}
-                expose:
-                  - "4000"
-                restart: unless-stopped
+            # Heredoc SEM aspas: ${FRONTEND_PORT} é expandido agora pelo shell
+            # \${REGISTRY} e \${GEMINI_API_KEY} ficam como ${...} no arquivo
+            # para o Docker Compose expandir em runtime
+            cat > "$WORKDIR/docker-compose.yml" << COMPOSE
+services:
+  backend:
+    image: \${REGISTRY}:backend
+    environment:
+      - GEMINI_API_KEY=\${GEMINI_API_KEY}
+    expose:
+      - "4000"
+    restart: unless-stopped
 
-              frontend:
-                image: ${REGISTRY}:frontend
-                ports:
-                  - "FRONTEND_PORT:80"
-                depends_on:
-                  - backend
-                restart: unless-stopped
-            COMPOSE
+  frontend:
+    image: \${REGISTRY}:frontend
+    ports:
+      - "${FRONTEND_PORT}:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+COMPOSE
+
+            echo "=== Compose gerado ==="
+            cat "$WORKDIR/docker-compose.yml"
 
             cd "$WORKDIR"
 
@@ -178,62 +193,16 @@ jobs:
             REGISTRY="${REGISTRY}" GEMINI_API_KEY="${GEMINI_API_KEY}" \
               docker compose -p "$PROJECT" down --remove-orphans --timeout 10 2>/dev/null || true
 
-            # Pull de ambas as imagens
+            # ────────────────────────────────────────────────────────────────
+            # FASE 5: PULL + UP COMPLETO
+            # ────────────────────────────────────────────────────────────────
+            echo "=== Pull ==="
             REGISTRY="${REGISTRY}" docker compose -p "$PROJECT" pull
 
-            # ────────────────────────────────────────────────────────────────
-            # FASE 5: SUBIR BACKEND PRIMEIRO
-            # ────────────────────────────────────────────────────────────────
-            # Define porta como 3000 provisoriamente para o pull funcionar
-            sed -i 's/FRONTEND_PORT/3000/' "$WORKDIR/docker-compose.yml"
-
-            echo "=== Subindo backend ==="
+            echo "=== Up (backend + frontend) ==="
             REGISTRY="${REGISTRY}" \
             GEMINI_API_KEY="${GEMINI_API_KEY}" \
-              docker compose -p "$PROJECT" up -d --force-recreate backend
-
-            sleep 2
-
-            echo "========== ss APÓS BACKEND UP =========="
-            ss -ltnp 2>/dev/null | grep ':3000' || echo "(nada na :3000 após backend)"
-
-            # ────────────────────────────────────────────────────────────────
-            # FASE 6: VERIFICAR PORTA ANTES DO FRONTEND
-            # ────────────────────────────────────────────────────────────────
-            echo "========== ss ANTES DO FRONTEND UP =========="
-            ss -ltnp 2>/dev/null | grep ':3000' || echo "OK: porta 3000 livre para frontend"
-
-            PORTA_OCUPADA=$(ss -ltnp 2>/dev/null | grep ':3000' | wc -l || echo 0)
-
-            if [ "$PORTA_OCUPADA" -gt 0 ]; then
-              echo "AVISO: porta 3000 ocupada antes do frontend!"
-              REBORN_PID=$(ss -ltnp 2>/dev/null | grep ':3000' | grep -oP 'pid=\K[0-9]+' | head -1 || true)
-              if [ -n "$REBORN_PID" ]; then
-                echo "--- processo reborn PID=$REBORN_PID ---"
-                ps -fp "$REBORN_PID" 2>/dev/null || true
-                cat /proc/"$REBORN_PID"/cmdline 2>/dev/null | tr '\0' ' ' || true; echo
-                echo "--- matando reborn ---"
-                kill -9 "$REBORN_PID" 2>/dev/null || true
-              fi
-              fuser -k 3000/tcp 2>/dev/null || true
-              sleep 1
-            fi
-
-            # Verificação final — se ainda ocupada, cai para 8080
-            FRONTEND_PORT=3000
-            if ss -ltnp 2>/dev/null | grep -q ':3000'; then
-              echo "FALLBACK DEFINITIVO: usando porta 8080 para o frontend"
-              FRONTEND_PORT=8080
-              sed -i 's/3000:80/8080:80/' "$WORKDIR/docker-compose.yml"
-            fi
-
-            # ────────────────────────────────────────────────────────────────
-            # FASE 7: SUBIR FRONTEND
-            # ────────────────────────────────────────────────────────────────
-            echo "=== Subindo frontend na porta $FRONTEND_PORT ==="
-            REGISTRY="${REGISTRY}" \
-            GEMINI_API_KEY="${GEMINI_API_KEY}" \
-              docker compose -p "$PROJECT" up -d --force-recreate frontend
+              docker compose -p "$PROJECT" up -d --force-recreate --remove-orphans
 
             sleep 3
 
@@ -253,8 +222,8 @@ jobs:
             ss -ltnp 2>/dev/null | grep -E ':3000|:8080|:4000' || echo "(nada)"
 
             echo "--- curl frontend ---"
-            curl -sf -o /dev/null -w "HTTP %{http_code}\n" http://localhost:"$FRONTEND_PORT" \
-              || echo "curl: sem resposta em $FRONTEND_PORT"
+            curl -sf -o /dev/null -w "HTTP %{http_code}\n" "http://localhost:${FRONTEND_PORT}" \
+              || echo "curl: sem resposta em ${FRONTEND_PORT}"
 
             echo "--- logs backend (últimas 20 linhas) ---"
             docker compose -p "$PROJECT" logs backend --tail=20 2>/dev/null || true
@@ -263,7 +232,7 @@ jobs:
             docker compose -p "$PROJECT" logs frontend --tail=10 2>/dev/null || true
 
             echo "=========================================="
-            echo "FRONTEND_PORT=$FRONTEND_PORT"
+            echo "FRONTEND_PORT=${FRONTEND_PORT}"
             echo "Deploy concluído."
         env:
           REGISTRY: ${{ env.REGISTRY }}
