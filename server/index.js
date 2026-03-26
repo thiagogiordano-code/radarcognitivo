@@ -49,6 +49,9 @@ Escreva uma análise concisa (aprox. 150 palavras) e estratégica:
     const msg = error?.message || String(error);
     const status = error?.status ?? error?.code ?? 'n/a';
     console.error(`[analyze] Gemini error — status=${status} message=${msg}`);
+    if (status === 429 || String(status) === '429' || msg.includes('429') || msg.toLowerCase().includes('quota')) {
+      return res.status(429).json({ error: 'Cota da API Gemini atingida. Tente novamente em alguns instantes.' });
+    }
     res.status(500).json({ error: `Erro ao chamar a API Gemini: ${msg}` });
   }
 });

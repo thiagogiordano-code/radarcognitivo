@@ -94,6 +94,7 @@ jobs:
               ps -fp "$PORT_PID" || true
               kill -9 "$PORT_PID" || true
             fi
+            docker compose -p "$PROJECT" down --remove-orphans --timeout 10 || true
             ss -ltnp | grep ':3000' || echo "OK: porta 3000 livre"
             FRONTEND_PORT=3000
             if ss -ltnp 2>/dev/null | grep -q ':3000'; then
@@ -119,7 +120,6 @@ jobs:
             COMPOSE
             echo "=== COMPOSE GERADO ==="
             cat docker-compose.yml
-            docker compose -p "$PROJECT" down --remove-orphans --timeout 10 || true
             docker compose -p "$PROJECT" pull
             docker compose -p "$PROJECT" up -d --force-recreate --remove-orphans
             docker compose -p "$PROJECT" ps
