@@ -128,9 +128,15 @@ jobs:
             curl -I "http://localhost:${FRONTEND_PORT}" || true
             echo "=== ENV backend (GEMINI_API_KEY) ==="
             docker exec radarcognitivo-backend-1 printenv | grep GEMINI || echo "GEMINI_API_KEY nao encontrada"
-            echo "=== Logs backend ==="
-            docker logs radarcognitivo-backend-1 --tail=30 2>&1 || true
             echo "=== Health check backend ==="
-            curl -sf "http://localhost:4000/health" || \
-              docker exec radarcognitivo-backend-1 wget -qO- http://localhost:4000/health || true
+            docker exec radarcognitivo-backend-1 wget -qO- http://localhost:4000/health 2>&1 || true
+            echo "=== Logs backend (arranque) ==="
+            docker logs radarcognitivo-backend-1 --tail=50 2>&1 || true
+            echo "=== Teste POST /api/analyze ==="
+            docker exec radarcognitivo-backend-1 wget -qO- \
+              --header='Content-Type: application/json' \
+              --post-data='{"profile":{"course":"Teste","dominantVark":["Visual"],"dominantKolb":["Ativo"]}}' \
+              http://localhost:4000/api/analyze 2>&1 || true
+            echo "=== Logs backend (pós-teste) ==="
+            docker logs radarcognitivo-backend-1 --tail=20 2>&1 || true
             echo "FRONTEND_PORT=${FRONTEND_PORT}"
