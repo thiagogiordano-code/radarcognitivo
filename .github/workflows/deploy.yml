@@ -71,16 +71,83 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: 22
-          command_timeout: 10m
+          command_timeout: 15m
           envs: REGISTRY,GHCR_TOKEN,GHCR_USER,GEMINI_API_KEY
           script: |
             set -eo pipefail
             PROJECT=radarcognitivo
             WORKDIR=/opt/radarcognitivo
 
-            echo "=== Login GHCR ==="
-            echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USER}" --password-stdin
+            # ────────────────────────────────────────────────────────────────
+            # FASE 1: DIAGNÓSTICO ANTES DE QUALQUER AÇÃO
+            # ────────────────────────────────────────────────────────────────
+            echo "========== ss ANTES DA LIMPEZA =========="
+            ss -ltnp 2>/dev/null | grep ':3000' || echo "(nada na :3000)"
 
+            PRE_PID=$(ss -ltnp 2>/dev/null | grep ':3000' | grep -oP 'pid=\K[0-9]+' | head -1 || true)
+            if [ -n "$PRE_PID" ]; then
+              echo "--- ps do PID $PRE_PID ---"
+              ps -fp "$PRE_PID" 2>/dev/null || true
+              echo "--- /proc/$PRE_PID/cmdline ---"
+              cat /proc/"$PRE_PID"/cmdline 2>/dev/null | tr '\0' ' ' || true; echo
+            fi
+
+            echo "=== pgrep clau|node ==="
+            pgrep -af 'clau|node' 2>/dev/null || echo "(nenhum)"
+
+            echo "=== docker ps -a ==="
+            docker ps -a --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null || true
+
+            # ────────────────────────────────────────────────────────────────
+            # FASE 2: IDENTIFICAR MECANISMO DE REINÍCIO
+            # ────────────────────────────────────────────────────────────────
+            echo "=== systemctl units (clau|node|radar|pm2|forever|supervisor) ==="
+            systemctl list-units --type=service --all 2>/dev/null \
+              | grep -Ei 'clau|node|radar|pm2|forever|supervisor' || echo "(nenhum)"
+
+            echo "=== pm2 list ==="
+            pm2 list 2>/dev/null || echo "(pm2 indisponível)"
+
+            echo "=== supervisorctl status ==="
+            supervisorctl status 2>/dev/null || echo "(supervisor indisponível)"
+
+            echo "=== crontab -l ==="
+            crontab -l 2>/dev/null || echo "(sem crontab)"
+
+            echo "=== /etc/systemd/system/ clau|radar ==="
+            ls /etc/systemd/system/ 2>/dev/null | grep -Ei 'clau|radar|node' || echo "(nenhum)"
+
+            # ────────────────────────────────────────────────────────────────
+            # FASE 3: MATAR E DESABILITAR PROCESSO HOST
+            # ────────────────────────────────────────────────────────────────
+            echo "=== Desabilitando serviços gerenciadores ==="
+            for svc in $(systemctl list-units --type=service --all 2>/dev/null \
+                         | grep -Ei 'clau|radar' | awk '{print $1}' || true); do
+              echo "  stop + disable: $svc"
+              systemctl stop "$svc" 2>/dev/null || true
+              systemctl disable "$svc" 2>/dev/null || true
+            done
+
+            echo "=== pm2: parar e salvar lista vazia ==="
+            if command -v pm2 &>/dev/null; then
+              pm2 list 2>/dev/null | grep -i 'clau\|radar\|node' && pm2 delete all 2>/dev/null && pm2 save 2>/dev/null || true
+            fi
+
+            echo "=== pkill node clau ==="
+            pkill -9 -f 'node.*/clau' 2>/dev/null && echo "pkill: morto" || echo "pkill: nada"
+
+            echo "=== fuser -k 3000/tcp ==="
+            fuser -k 3000/tcp 2>/dev/null && echo "fuser: porta liberada" || true
+
+            sleep 1
+
+            echo "========== ss APÓS LIMPEZA =========="
+            ss -ltnp 2>/dev/null | grep ':3000' || echo "OK: porta 3000 livre"
+
+            # ────────────────────────────────────────────────────────────────
+            # FASE 4: LOGIN GHCR + PREPARAR COMPOSE
+            # ────────────────────────────────────────────────────────────────
+            echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USER}" --password-stdin
             mkdir -p "$WORKDIR"
 
             cat > "$WORKDIR/docker-compose.yml" << 'COMPOSE'
@@ -96,7 +163,7 @@ jobs:
               frontend:
                 image: ${REGISTRY}:frontend
                 ports:
-                  - "3000:80"
+                  - "FRONTEND_PORT:80"
                 depends_on:
                   - backend
                 restart: unless-stopped
@@ -104,50 +171,101 @@ jobs:
 
             cd "$WORKDIR"
 
-            echo "=== DIAGNÓSTICO: o que está na porta 3000 ==="
-            ss -ltnp 2>/dev/null | grep ':3000' || echo "(ss: nada)"
-            docker ps -a --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null | grep -E "3000|NAMES" || echo "(docker: nada)"
-
-            echo "=== LIMPEZA AGRESSIVA ==="
-            # Containers pelo nome (todas as variações conhecidas)
+            # Remove containers stale de qualquer projeto anterior
             for cname in radarcognitivo radarcognitivo-frontend-1 radarcognitivo-backend-1; do
-              docker rm -f "$cname" 2>/dev/null && echo "Removido: $cname" || true
+              docker rm -f "$cname" 2>/dev/null || true
             done
 
-            # Projeto compose anterior
             REGISTRY="${REGISTRY}" GEMINI_API_KEY="${GEMINI_API_KEY}" \
               docker compose -p "$PROJECT" down --remove-orphans --timeout 10 2>/dev/null || true
 
-            # Qualquer container ainda mapeando porta 3000
-            CID=$(docker ps -aq --filter "publish=3000" 2>/dev/null)
-            [ -n "${CID}" ] && docker rm -f ${CID} 2>/dev/null && echo "Removido por porta: ${CID}" || true
-
-            # Processo host (não-Docker) usando a porta — kill forçado
-            fuser -k 3000/tcp 2>/dev/null && echo "fuser: processo host na 3000 eliminado" || true
-
-            echo "=== VERIFICAÇÃO PÓS-LIMPEZA ==="
-            ss -ltnp 2>/dev/null | grep ':3000' && echo "AVISO: porta 3000 ainda ocupada!" || echo "OK: porta 3000 livre"
-
-            echo "=== Pull ==="
+            # Pull de ambas as imagens
             REGISTRY="${REGISTRY}" docker compose -p "$PROJECT" pull
 
-            echo "=== Up ==="
+            # ────────────────────────────────────────────────────────────────
+            # FASE 5: SUBIR BACKEND PRIMEIRO
+            # ────────────────────────────────────────────────────────────────
+            # Define porta como 3000 provisoriamente para o pull funcionar
+            sed -i 's/FRONTEND_PORT/3000/' "$WORKDIR/docker-compose.yml"
+
+            echo "=== Subindo backend ==="
             REGISTRY="${REGISTRY}" \
             GEMINI_API_KEY="${GEMINI_API_KEY}" \
-              docker compose -p "$PROJECT" up -d --force-recreate --remove-orphans
+              docker compose -p "$PROJECT" up -d --force-recreate backend
+
+            sleep 2
+
+            echo "========== ss APÓS BACKEND UP =========="
+            ss -ltnp 2>/dev/null | grep ':3000' || echo "(nada na :3000 após backend)"
+
+            # ────────────────────────────────────────────────────────────────
+            # FASE 6: VERIFICAR PORTA ANTES DO FRONTEND
+            # ────────────────────────────────────────────────────────────────
+            echo "========== ss ANTES DO FRONTEND UP =========="
+            ss -ltnp 2>/dev/null | grep ':3000' || echo "OK: porta 3000 livre para frontend"
+
+            PORTA_OCUPADA=$(ss -ltnp 2>/dev/null | grep ':3000' | wc -l || echo 0)
+
+            if [ "$PORTA_OCUPADA" -gt 0 ]; then
+              echo "AVISO: porta 3000 ocupada antes do frontend!"
+              REBORN_PID=$(ss -ltnp 2>/dev/null | grep ':3000' | grep -oP 'pid=\K[0-9]+' | head -1 || true)
+              if [ -n "$REBORN_PID" ]; then
+                echo "--- processo reborn PID=$REBORN_PID ---"
+                ps -fp "$REBORN_PID" 2>/dev/null || true
+                cat /proc/"$REBORN_PID"/cmdline 2>/dev/null | tr '\0' ' ' || true; echo
+                echo "--- matando reborn ---"
+                kill -9 "$REBORN_PID" 2>/dev/null || true
+              fi
+              fuser -k 3000/tcp 2>/dev/null || true
+              sleep 1
+            fi
+
+            # Verificação final — se ainda ocupada, cai para 8080
+            FRONTEND_PORT=3000
+            if ss -ltnp 2>/dev/null | grep -q ':3000'; then
+              echo "FALLBACK DEFINITIVO: usando porta 8080 para o frontend"
+              FRONTEND_PORT=8080
+              sed -i 's/3000:80/8080:80/' "$WORKDIR/docker-compose.yml"
+            fi
+
+            # ────────────────────────────────────────────────────────────────
+            # FASE 7: SUBIR FRONTEND
+            # ────────────────────────────────────────────────────────────────
+            echo "=== Subindo frontend na porta $FRONTEND_PORT ==="
+            REGISTRY="${REGISTRY}" \
+            GEMINI_API_KEY="${GEMINI_API_KEY}" \
+              docker compose -p "$PROJECT" up -d --force-recreate frontend
 
             sleep 3
 
-            echo "=== Status ==="
-            REGISTRY="${REGISTRY}" \
-            GEMINI_API_KEY="${GEMINI_API_KEY}" \
+            # ────────────────────────────────────────────────────────────────
+            # VALIDAÇÃO FINAL
+            # ────────────────────────────────────────────────────────────────
+            echo "========== VALIDAÇÃO FINAL =========="
+
+            echo "--- docker compose ps ---"
+            REGISTRY="${REGISTRY}" GEMINI_API_KEY="${GEMINI_API_KEY}" \
               docker compose -p "$PROJECT" ps
 
-            echo "=== Logs backend ==="
-            docker logs radarcognitivo-backend-1 --tail=20 2>/dev/null || \
-            docker compose -p "$PROJECT" logs backend --tail=20 || true
+            echo "--- docker ps (ports) ---"
+            docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
 
-            echo "=== Deploy concluído ==="
+            echo "--- ss 3000/8080/4000 ---"
+            ss -ltnp 2>/dev/null | grep -E ':3000|:8080|:4000' || echo "(nada)"
+
+            echo "--- curl frontend ---"
+            curl -sf -o /dev/null -w "HTTP %{http_code}\n" http://localhost:"$FRONTEND_PORT" \
+              || echo "curl: sem resposta em $FRONTEND_PORT"
+
+            echo "--- logs backend (últimas 20 linhas) ---"
+            docker compose -p "$PROJECT" logs backend --tail=20 2>/dev/null || true
+
+            echo "--- logs frontend (últimas 10 linhas) ---"
+            docker compose -p "$PROJECT" logs frontend --tail=10 2>/dev/null || true
+
+            echo "=========================================="
+            echo "FRONTEND_PORT=$FRONTEND_PORT"
+            echo "Deploy concluído."
         env:
           REGISTRY: ${{ env.REGISTRY }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
