@@ -146,7 +146,7 @@ jobs:
             # ────────────────────────────────────────────────────────────────
             # FASE 4: DETERMINAR PORTA + LOGIN GHCR + GERAR COMPOSE FINAL
             # ────────────────────────────────────────────────────────────────
-            # Decide porta ANTES de gerar o compose — sem placeholder, sem sed
+            # Decide porta ANTES de gerar o compose
             if ss -ltnp 2>/dev/null | grep -q ':3000'; then
               FRONTEND_PORT=8080
               echo "FALLBACK: porta 3000 ainda ocupada, usando 8080"
@@ -158,21 +158,19 @@ jobs:
             echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USER}" --password-stdin
             mkdir -p "$WORKDIR"
 
-            # Heredoc SEM aspas: ${FRONTEND_PORT} é expandido agora pelo shell
-            # \${REGISTRY} e \${GEMINI_API_KEY} ficam como ${...} no arquivo
-            # para o Docker Compose expandir em runtime
-            cat > "$WORKDIR/docker-compose.yml" << COMPOSE
+            # Heredoc SEM aspas no delimitador — todas as variáveis expandidas
+            # pelo shell no momento da escrita: sem placeholder, sem sed, sem \$
+            cat > "$WORKDIR/docker-compose.yml" <<COMPOSE
 services:
   backend:
-    image: \${REGISTRY}:backend
+    image: ${REGISTRY}:backend
     environment:
-      - GEMINI_API_KEY=\${GEMINI_API_KEY}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
     expose:
       - "4000"
     restart: unless-stopped
-
   frontend:
-    image: \${REGISTRY}:frontend
+    image: ${REGISTRY}:frontend
     ports:
       - "${FRONTEND_PORT}:80"
     depends_on:
@@ -190,19 +188,16 @@ COMPOSE
               docker rm -f "$cname" 2>/dev/null || true
             done
 
-            REGISTRY="${REGISTRY}" GEMINI_API_KEY="${GEMINI_API_KEY}" \
-              docker compose -p "$PROJECT" down --remove-orphans --timeout 10 2>/dev/null || true
+            docker compose -p "$PROJECT" down --remove-orphans --timeout 10 2>/dev/null || true
 
             # ────────────────────────────────────────────────────────────────
             # FASE 5: PULL + UP COMPLETO
             # ────────────────────────────────────────────────────────────────
             echo "=== Pull ==="
-            REGISTRY="${REGISTRY}" docker compose -p "$PROJECT" pull
+            docker compose -p "$PROJECT" pull
 
             echo "=== Up (backend + frontend) ==="
-            REGISTRY="${REGISTRY}" \
-            GEMINI_API_KEY="${GEMINI_API_KEY}" \
-              docker compose -p "$PROJECT" up -d --force-recreate --remove-orphans
+            docker compose -p "$PROJECT" up -d --force-recreate --remove-orphans
 
             sleep 3
 
@@ -212,8 +207,7 @@ COMPOSE
             echo "========== VALIDAÇÃO FINAL =========="
 
             echo "--- docker compose ps ---"
-            REGISTRY="${REGISTRY}" GEMINI_API_KEY="${GEMINI_API_KEY}" \
-              docker compose -p "$PROJECT" ps
+            docker compose -p "$PROJECT" ps
 
             echo "--- docker ps (ports) ---"
             docker ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
