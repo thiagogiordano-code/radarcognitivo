@@ -33,17 +33,16 @@ app.post('/api/analyze', async (req, res) => {
   try {
     const ai = new GoogleGenAI({ apiKey });
     const response = await ai.models.generateContent({
-      model: 'gemini-2.5-pro',
+      model: 'gemini-2.0-flash',
       contents: prompt,
-      config: {
-        thinkingConfig: { thinkingBudget: 32768 },
-      },
     });
     res.json({ text: response.text || 'Não foi possível gerar a análise detalhada no momento.' });
   } catch (error) {
-    console.error('Gemini error:', error);
-    res.status(500).json({ error: 'Erro ao chamar a API Gemini.' });
+    console.error('Gemini error:', error?.message || error);
+    res.status(500).json({ error: `Erro ao chamar a API Gemini: ${error?.message || 'erro desconhecido'}` });
   }
 });
+
+app.get('/health', (_req, res) => res.json({ status: 'ok', geminiKeySet: !!process.env.GEMINI_API_KEY }));
 
 app.listen(4000, () => console.log('Backend rodando na porta 4000'));

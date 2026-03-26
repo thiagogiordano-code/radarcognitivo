@@ -126,4 +126,11 @@ jobs:
             docker ps --format 'table {{.Names}}\t{{.Ports}}'
             ss -ltnp | grep -E ':3000|:8080|:4000' || true
             curl -I "http://localhost:${FRONTEND_PORT}" || true
+            echo "=== ENV backend (GEMINI_API_KEY) ==="
+            docker exec radarcognitivo-backend-1 printenv | grep GEMINI || echo "GEMINI_API_KEY nao encontrada"
+            echo "=== Logs backend ==="
+            docker logs radarcognitivo-backend-1 --tail=30 2>&1 || true
+            echo "=== Health check backend ==="
+            curl -sf "http://localhost:4000/health" || \
+              docker exec radarcognitivo-backend-1 wget -qO- http://localhost:4000/health || true
             echo "FRONTEND_PORT=${FRONTEND_PORT}"
