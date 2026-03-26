@@ -8,6 +8,10 @@ export const generateProfileAnalysis = async (profile: UserProfile): Promise<str
       body: JSON.stringify({ profile }),
     });
 
+    if (response.status === 429) {
+      return 'O serviço de análise personalizada está temporariamente indisponível (cota atingida). Por favor, tente novamente em alguns instantes.';
+    }
+
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }
